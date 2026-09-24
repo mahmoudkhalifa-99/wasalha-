@@ -1,0 +1,47 @@
+name: wasalah_app
+description: "تطبيق وصلها - خدمة التوصيل الذكية (أشمون)"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+  # Firebase
+  firebase_core: ^2.27.0
+  firebase_auth: ^4.17.4
+  cloud_firestore: ^4.15.4
+  firebase_messaging: ^14.7.15
+  google_sign_in: ^6.2.1
+
+  # State management
+  provider: ^6.1.2
+
+  # UI / utils
+  google_fonts: ^6.2.1
+  intl: ^0.19.0
+  cached_network_image: ^3.3.1
+  shared_preferences: ^2.2.2
+  url_launcher: ^6.2.5
+  geolocator: ^11.0.0
+  flutter_map: ^6.1.0
+  latlong2: ^0.9.1
+  flutter_svg: ^2.0.10+1
+  http: ^1.2.1
+  flutter_local_notifications: ^17.2.2
+  image_picker: ^1.1.2
+  firebase_storage: ^11.7.7
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/

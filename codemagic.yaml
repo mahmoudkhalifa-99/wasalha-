@@ -1,0 +1,113 @@
+# إعداد Codemagic لتطبيق وصلها (Flutter) - Android فقط
+#
+# قبل ما تستخدم الملف ده، لازم:
+# 1) تشغّل `flutter create --org com.wasalah .` محليًا وترفع android/ على Git
+#    (Codemagic بيبني المشروع زي ما هو من الريبو، مش بيولّد المنصات بنفسه)
+# 2) تظبط applicationId يبقى متطابق مع القيمة هنا (PACKAGE_NAME)
+#    أو تعدّل القيمة دي تحت لو سبت الـ ID اللي اتولّد افتراضيًا
+# 3) غيّر your-email@example.com تحت لإيميلك الحقيقي
+
+workflows:
+  android-workflow:
+    name: وصلها - Android
+    max_build_duration: 60
+    instance_type: linux_x2
+    environment:
+      flutter: stable
+      groups:
+        - wasalah_env
+      vars:
+        PACKAGE_NAME: "com.wasalah.app"
+    scripts:
+      - name: توليد مجلد android لو غير موجود
+        script: |
+          if [ ! -f "android/app/build.gradle" ] && [ ! -f "android/app/build.gradle.kts" ]; then
+            echo "مجلد android مش موجود - جاري توليده..."
+            flutter create --platforms=android --org com.wasalah .
+          else
+            echo "مجلد android موجود بالفعل"
+          fi
+
+      - name: تفعيل Core Library Desugaring (مطلوب لـ flutter_local_notifications)
+        script: |
+          GRADLE_FILE="android/app/build.gradle.kts"
+          [ -f "$GRADLE_FILE" ] || GRADLE_FILE="android/app/build.gradle"
+          if [ -f "$GRADLE_FILE" ] && ! grep -q "isCoreLibraryDesugaringEnabled\|coreLibraryDesugaringEnabled" "$GRADLE_FILE"; then
+            python3 - "$GRADLE_FILE" <<'PYEOF'
+          import sys
+          path = sys.argv[1]
+          with open(path) as f:
+              content = f.read()
+
+          if path.endswith(".kts"):
+              if "compileOptions {" in content:
+                  content = content.replace(
+                      "compileOptions {",
+                      "compileOptions {\n        isCoreLibraryDesugaringEnabled = true",
+                      1,
+                  )
+              if "coreLibraryDesugaring(" not in content:
+                  if "dependencies {" in content:
+                      content = content.replace(
+                          "dependencies {",
+                          'dependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")',
+                          1,
+                      )
+                  else:
+                      content += '\n\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n}\n'
+          else:
+              if "compileOptions {" in content:
+                  content = content.replace(
+                      "compileOptions {",
+                      "compileOptions {\n        coreLibraryDesugaringEnabled true",
+                      1,
+                  )
+              if "coreLibraryDesugaring " not in content and "coreLibraryDesugaring(" not in content:
+                  if "dependencies {" in content:
+                      content = content.replace(
+                          "dependencies {",
+                          "dependencies {\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'",
+                          1,
+                      )
+                  else:
+                      content += "\n\ndependencies {\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'\n}\n"
+
+          with open(path, "w") as f:
+              f.write(content)
+          PYEOF
+            echo "تم تفعيل desugaring في $GRADLE_FILE"
+          else
+            echo "desugaring مفعّل بالفعل أو الملف مش موجود"
+          fi
+
+      - name: التأكد من وجود مجلد assets/images
+        script: |
+          mkdir -p assets/images
+          [ -f assets/images/.gitkeep ] || touch assets/images/.gitkeep
+
+      - name: تثبيت الباكدجات
+        script: flutter pub get
+
+      - name: حقن مفتاح Gemini (لو موجود كمتغيّر بيئة)
+        script: |
+          if [ -n "${GEMINI_API_KEY:-}" ]; then
+            sed -i "s/YOUR_GEMINI_API_KEY_HERE/${GEMINI_API_KEY}/" lib/config/ai_config.dart
+          else
+            echo "تنبيه: GEMINI_API_KEY مش موجود كمتغيّر بيئة - المساعد الذكي هيفضل معطّل"
+          fi
+
+      - name: بناء APK
+        script: flutter build apk --release
+
+      - name: بناء App Bundle (للنشر على Google Play)
+        script: flutter build appbundle --release
+    artifacts:
+      - build/app/outputs/flutter-apk/*.apk
+      - build/app/outputs/bundle/release/*.aab
+    publishing:
+      email:
+        recipients:
+          - mahmoudkhalifa.kh91@gmail.com
+        notify:
+          success: true
+          failure: true
