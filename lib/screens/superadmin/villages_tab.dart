@@ -227,7 +227,7 @@ class _VillagesTabState extends State<VillagesTab> {
                                     children: [
                                       Expanded(
                                         child: ElevatedButton(
-                                          onPressed: () => _saveCoords(d.id, zone, v.id),
+                                          onPressed: () => _saveCoords(d.id, zone!, v.id),
                                           child: const Text('حفظ الإحداثيات', style: TextStyle(fontSize: 11)),
                                         ),
                                       ),
@@ -256,7 +256,7 @@ class _VillagesTabState extends State<VillagesTab> {
                                   ),
                                   IconButton(
                                     icon: const Icon(Icons.delete_outline, size: 16, color: Colors.red),
-                                    onPressed: () => _removeVillage(d.id, zone, v),
+                                    onPressed: () => _removeVillage(d.id, zone!, v),
                                   ),
                                 ],
                               ),
