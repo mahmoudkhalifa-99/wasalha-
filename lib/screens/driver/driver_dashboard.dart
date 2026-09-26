@@ -8,7 +8,6 @@ import '../notifications_screen.dart';
 import '../../services/push_service.dart';
 import '../../widgets/profile_avatar.dart';
 import '../support_screen.dart';
-import 'order_route_map.dart';
 
 class DriverDashboard extends StatefulWidget {
   final AppUser user;
@@ -113,33 +112,60 @@ class _DriverHomeTab extends StatelessWidget {
           children: [
             // بطاقة أونلاين/أوفلاين
             Container(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
               decoration: BoxDecoration(
-                color: isOnline ? AppColors.primary : Colors.blueGrey.shade900,
-                borderRadius: BorderRadius.circular(32),
+                gradient: LinearGradient(
+                  begin: Alignment.centerRight,
+                  end: Alignment.centerLeft,
+                  colors: isOnline
+                      ? [AppColors.primary, AppColors.primaryDark]
+                      : [Colors.blueGrey.shade700, Colors.blueGrey.shade900],
+                ),
+                borderRadius: BorderRadius.circular(28),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(isOnline ? 'نشط الآن' : 'أوفلاين',
-                          style: const TextStyle(
-                              color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900)),
-                      const SizedBox(height: 4),
-                      const Text('مركبات أشمون النشطة',
-                          style: TextStyle(color: Colors.white70, fontSize: 11)),
-                    ],
-                  ),
                   IconButton.filled(
                     onPressed: onToggleOnline,
                     style: IconButton.styleFrom(
-                      backgroundColor: isOnline ? Colors.white : AppColors.primary,
-                      padding: const EdgeInsets.all(18),
+                      backgroundColor: Colors.white,
+                      padding: const EdgeInsets.all(16),
                     ),
                     icon: Icon(Icons.power_settings_new,
-                        color: isOnline ? AppColors.primary : Colors.white, size: 30),
+                        color: isOnline ? AppColors.primary : Colors.blueGrey.shade900, size: 26),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(isOnline ? 'نشط ومستعد' : 'أوفلاين حاليًا',
+                              textAlign: TextAlign.right,
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900)),
+                          const SizedBox(height: 6),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(999)),
+                                child: const Text('كابتن توكتوك',
+                                    style: TextStyle(
+                                        color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800)),
+                              ),
+                              const SizedBox(width: 6),
+                              const Text('وصلها المنوفية',
+                                  style: TextStyle(color: Colors.white70, fontSize: 11)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -324,83 +350,126 @@ class _ActiveOrderPanelState extends State<_ActiveOrderPanel> {
     if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
+  String get _statusLabel {
+    switch (widget.order.status) {
+      case OrderStatus.ASSIGNED:
+        return 'في الطريق للاستلام';
+      case OrderStatus.PICKED:
+        return 'تم الاستلام';
+      case OrderStatus.IN_DELIVERY:
+        return 'جاري التوصيل';
+      case OrderStatus.DELIVERED:
+        return 'تم التوصيل';
+      default:
+        return enumToStr(widget.order.status);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final o = widget.order;
-    return Card(
-      shape: RoundedRectangleBorder(
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
         borderRadius: BorderRadius.circular(28),
-        side: const BorderSide(color: AppColors.primary, width: 3),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Chip(
-                  label: Text(enumToStr(o.status)),
-                  backgroundColor: AppColors.primary.withOpacity(0.12),
-                ),
-                Text('${o.price.toStringAsFixed(0)} ج.م',
-                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 26)),
-              ],
-            ),
-            const SizedBox(height: 14),
-            OrderRouteMap(order: o),
-            const SizedBox(height: 14),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _openNavigation,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.primaryDark,
-                  side: const BorderSide(color: AppColors.primary),
-                ),
-                icon: const Icon(Icons.navigation_outlined),
-                label: Text(o.status == OrderStatus.ASSIGNED
-                    ? 'ابدأ الملاحة لنقطة الاستلام'
-                    : 'ابدأ الملاحة لنقطة التسليم'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(999)),
+                child: Text(_statusLabel,
+                    style: const TextStyle(
+                        color: AppColors.primaryDark, fontWeight: FontWeight.w800, fontSize: 11)),
               ),
-            ),
-            const SizedBox(height: 12),
-            Text('${o.pickup.address} ← ${o.dropoff.address}',
-                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-            if (o.notes != null && o.notes!.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text('ملاحظات: ${o.notes}', style: const TextStyle(color: Colors.grey)),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text('${o.price.toStringAsFixed(0)}',
+                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 30)),
+                  const Padding(
+                    padding: EdgeInsets.only(right: 4, bottom: 4),
+                    child: Text('ج.م', style: TextStyle(fontSize: 13, color: Colors.black54)),
+                  ),
+                ],
+              ),
             ],
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _call,
-                    icon: const Icon(Icons.call),
-                    label: const Text('اتصال بالعميل'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => ChatScreen(order: widget.order, user: widget.driver)),
-                    ),
-                    icon: const Icon(Icons.chat_bubble_outline),
-                    label: const Text('محادثة'),
-                  ),
-                ),
-              ],
+          ),
+          const SizedBox(height: 18),
+          _PointRow(
+            color: AppColors.primary,
+            icon: Icons.location_on,
+            caption: 'المطعم / نقطة الاستلام',
+            value: o.pickup.address,
+          ),
+          const SizedBox(height: 14),
+          _PointRow(
+            color: Colors.redAccent,
+            icon: Icons.navigation,
+            caption: 'وجهة التوصيل',
+            value: o.dropoff.address,
+          ),
+          if (o.notes != null && o.notes!.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text('ملاحظات: ${o.notes}', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+          ],
+          const SizedBox(height: 18),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _openNavigation,
+              icon: const Icon(Icons.my_location, size: 18),
+              label: const Text('الخريطة ومتابعة العميل'),
             ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => ChatScreen(order: widget.order, user: widget.driver)),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.black87,
+                    side: BorderSide(color: Colors.grey.shade300),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  icon: const Icon(Icons.chat_bubble_outline, size: 18),
+                  label: const Text('دردشة'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _call,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0F172A),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  icon: const Icon(Icons.call, size: 18),
+                  label: const Text('اتصال'),
+                ),
+              ),
+            ],
+          ),
+          if (_nextStatus != null) ...[
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _nextStatus == null || loading ? null : _advance,
+                onPressed: loading ? null : _advance,
                 child: loading
                     ? const SizedBox(
                         height: 20,
@@ -410,8 +479,45 @@ class _ActiveOrderPanelState extends State<_ActiveOrderPanel> {
               ),
             ),
           ],
-        ),
+        ],
       ),
+    );
+  }
+}
+
+/// صف نقطة استلام/تسليم داخل كارت الطلب النشط
+class _PointRow extends StatelessWidget {
+  final Color color;
+  final IconData icon;
+  final String caption;
+  final String value;
+  const _PointRow({required this.color, required this.icon, required this.caption, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(14)),
+          child: Icon(icon, color: color, size: 18),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(caption, style: const TextStyle(fontSize: 11, color: Colors.black45)),
+              const SizedBox(height: 2),
+              Text(value,
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

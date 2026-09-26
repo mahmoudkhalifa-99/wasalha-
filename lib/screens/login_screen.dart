@@ -233,7 +233,10 @@ class _LoginScreenState extends State<LoginScreen> {
         isCompletingProfile = true;
       });
     } catch (e) {
-      setState(() => errorMsg = 'فشل تسجيل الدخول عبر جوجل، يرجى المحاولة مرة أخرى.');
+      // TODO: رجّع الرسالة العامة تاني بعد ما تتأكد إن تسجيل الدخول بيشتغل تمام
+      setState(() => errorMsg = 'فشل تسجيل الدخول عبر جوجل: $e');
+      // ignore: avoid_print
+      print('Google Sign-In error: $e');
     } finally {
       if (mounted) setState(() => loading = false);
     }

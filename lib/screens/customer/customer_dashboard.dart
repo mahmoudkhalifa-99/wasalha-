@@ -1,11 +1,13 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../models/models.dart';
 import '../../services/firebase_service.dart';
 import '../../theme/app_theme.dart';
+import '../../data/menofia_data.dart';
 import 'food/restaurants_list_screen.dart';
 import 'new_quick_order_screen.dart';
-import 'new_taxi_order_screen.dart';
 import '../notifications_screen.dart';
 import '../ai_assistant_screen.dart';
 import '../../services/push_service.dart';
@@ -98,22 +100,144 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   }
 }
 
-class _HomeTab extends StatelessWidget {
+class _HomeTab extends StatefulWidget {
   final AppUser user;
   const _HomeTab({required this.user});
 
+  @override
+  State<_HomeTab> createState() => _HomeTabState();
+}
+
+class _HomeTabState extends State<_HomeTab> {
   static const _categories = [
-    (OrderCategory.TAXI, 'مشوار', Icons.local_taxi),
-    (OrderCategory.FOOD, 'مطاعم', Icons.restaurant),
-    (OrderCategory.PHARMACY, 'صيدلية', Icons.local_pharmacy),
-    (OrderCategory.GROCERY, 'سوبر ماركت', Icons.local_grocery_store),
-    (OrderCategory.PARCEL, 'طرد', Icons.local_shipping),
+    (OrderCategory.PHARMACY, 'صيدلية', 'روشتة وعلاج', Icons.local_pharmacy),
+    (OrderCategory.FOOD, 'مطاعم', 'أكل جاهز', Icons.restaurant),
+    (OrderCategory.TAXI, 'مشوار', 'توصيل ركاب', Icons.two_wheeler),
+    (OrderCategory.GROCERY, 'سوبر ماركت', 'بقالة ومنتجات', Icons.local_grocery_store),
+    (OrderCategory.PARCEL, 'طرد', 'استلام وتسليم', Icons.local_shipping),
   ];
+
+  OrderCategory selected = OrderCategory.TAXI;
+
+  // -- نموذج طلب المشوار المدمج في الرئيسية --
+  DistrictData? pickupDistrict;
+  VillageData? pickupVillage;
+  DistrictData? dropoffDistrict;
+  VillageData? dropoffVillage;
+  final pickupDetailCtrl = TextEditingController();
+  final dropoffDetailCtrl = TextEditingController();
+  VehicleType vehicle = VehicleType.MOTORCYCLE;
+  bool loading = false;
+
+  @override
+  void dispose() {
+    pickupDetailCtrl.dispose();
+    dropoffDetailCtrl.dispose();
+    super.dispose();
+  }
+
+  double get _distanceKm {
+    final pLat = pickupVillage?.lat ?? 0, pLng = pickupVillage?.lng ?? 0;
+    final dLatV = dropoffVillage?.lat ?? 0, dLngV = dropoffVillage?.lng ?? 0;
+    if ((pLat == 0 && pLng == 0) || (dLatV == 0 && dLngV == 0)) return 3;
+    const r = 6371.0;
+    final dLat = (dLatV - pLat) * (pi / 180);
+    final dLng = (dLngV - pLng) * (pi / 180);
+    final a = sin(dLat / 2) * sin(dLat / 2) +
+        cos(pLat * pi / 180) * cos(dLatV * pi / 180) * sin(dLng / 2) * sin(dLng / 2);
+    final c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    final dist = r * c;
+    return dist < 1 ? 1 : dist;
+  }
+
+  double get _estimatedPrice {
+    const base = 10.0, perKm = 3.0;
+    const multiplier = {VehicleType.TOKTOK: 1.0, VehicleType.MOTORCYCLE: 0.8, VehicleType.CAR: 1.6};
+    return (base + perKm * _distanceKm) * (multiplier[vehicle] ?? 1.0);
+  }
+
+  Future<void> _confirmTaxiOrder() async {
+    if (pickupVillage == null || dropoffVillage == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('من فضلك اختر نقطة الانطلاق والوصول')));
+      return;
+    }
+    setState(() => loading = true);
+    try {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final pickupAddress =
+          [pickupVillage!.name, pickupDetailCtrl.text.trim()].where((s) => s.isNotEmpty).join(' - ');
+      final dropoffAddress = [dropoffVillage!.name, dropoffDetailCtrl.text.trim()]
+          .where((s) => s.isNotEmpty)
+          .join(' - ');
+      final order = Order(
+        id: '',
+        customerId: widget.user.id,
+        customerPhone: widget.user.phone,
+        operatorId: widget.user.operatorId ?? '',
+        zoneId: dropoffDistrict?.id ?? widget.user.zoneId ?? '',
+        category: OrderCategory.TAXI,
+        pickup: OrderLocation(
+          address: pickupAddress,
+          lat: pickupVillage!.lat,
+          lng: pickupVillage!.lng,
+          villageName: pickupVillage!.name,
+        ),
+        dropoff: OrderLocation(
+          address: dropoffAddress,
+          lat: dropoffVillage!.lat,
+          lng: dropoffVillage!.lng,
+          villageName: dropoffVillage!.name,
+        ),
+        status: OrderStatus.PENDING,
+        statusHistory: [
+          StatusHistoryItem(status: OrderStatus.PENDING, changedAt: now, changedBy: widget.user.id)
+        ],
+        updatedAt: now,
+        price: _estimatedPrice,
+        distance: _distanceKm,
+        commission: _estimatedPrice * 0.15,
+        createdAt: now,
+        paymentMethod: PaymentMethod.CASH,
+        requestedVehicleType: vehicle,
+      );
+      final ref = await FirebaseService.instance.createOrder(order);
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) => OrderTrackingScreen(orderId: ref.id, user: widget.user)),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('حصل خطأ أثناء إرسال الطلب: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  void _onCategoryTap(OrderCategory category) {
+    if (category == OrderCategory.TAXI) {
+      setState(() => selected = category);
+      return;
+    }
+    setState(() => selected = category);
+    if (category == OrderCategory.FOOD) {
+      Navigator.push(context, MaterialPageRoute(builder: (_) => RestaurantsListScreen(user: widget.user)));
+    } else {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => NewQuickOrderScreen(user: widget.user, category: category)),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<Order>>(
-      stream: FirebaseService.instance.activeOrdersForCustomer(user.id),
+      stream: FirebaseService.instance.activeOrdersForCustomer(widget.user.id),
       builder: (context, snap) {
         final active = snap.data ?? [];
         return SingleChildScrollView(
@@ -128,7 +252,7 @@ class _HomeTab extends StatelessWidget {
                         .titleMedium
                         ?.copyWith(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 8),
-                ...active.map((o) => _ActiveOrderCard(order: o, user: user)),
+                ...active.map((o) => _ActiveOrderCard(order: o, user: widget.user)),
                 const SizedBox(height: 20),
               ],
               StreamBuilder<List<Ad>>(
@@ -148,22 +272,110 @@ class _HomeTab extends StatelessWidget {
                       .titleMedium
                       ?.copyWith(fontWeight: FontWeight.w800)),
               const SizedBox(height: 12),
-              GridView.count(
-                crossAxisCount: 2,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                mainAxisSpacing: 14,
-                crossAxisSpacing: 14,
-                childAspectRatio: 1.3,
-                children: _categories
-                    .map((c) => _CategoryCard(
-                          category: c.$1,
-                          label: c.$2,
-                          icon: c.$3,
-                          user: user,
-                        ))
-                    .toList(),
+              SizedBox(
+                height: 96,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _categories.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 12),
+                  itemBuilder: (context, i) {
+                    final c = _categories[i];
+                    return _ServiceCard(
+                      selected: selected == c.$1,
+                      label: c.$2,
+                      subtitle: c.$3,
+                      icon: c.$4,
+                      onTap: () => _onCategoryTap(c.$1),
+                    );
+                  },
+                ),
               ),
+              if (selected == OrderCategory.TAXI) ...[
+                const SizedBox(height: 20),
+                _LocationSection(
+                  color: AppColors.primary,
+                  icon: Icons.location_on,
+                  title: 'نقطة الانطلاق (الركوب)',
+                  subtitle: 'من أين ستبدأ الرحلة؟',
+                  district: pickupDistrict,
+                  village: pickupVillage,
+                  detailCtrl: pickupDetailCtrl,
+                  onDistrictChanged: (d) => setState(() {
+                    pickupDistrict = d;
+                    pickupVillage = null;
+                  }),
+                  onVillageChanged: (v) => setState(() => pickupVillage = v),
+                ),
+                const SizedBox(height: 14),
+                _LocationSection(
+                  color: Colors.redAccent,
+                  icon: Icons.flag,
+                  title: 'نقطة الوصول (النزول)',
+                  subtitle: 'إلى أين تريد الذهاب؟',
+                  district: dropoffDistrict,
+                  village: dropoffVillage,
+                  detailCtrl: dropoffDetailCtrl,
+                  onDistrictChanged: (d) => setState(() {
+                    dropoffDistrict = d;
+                    dropoffVillage = null;
+                  }),
+                  onVillageChanged: (v) => setState(() => dropoffVillage = v),
+                ),
+                const SizedBox(height: 18),
+                Text('نوع المركبة المفضلة (أسطول وصلها)',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w800)),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _VehicleCard(
+                        selected: vehicle == VehicleType.MOTORCYCLE,
+                        icon: Icons.two_wheeler,
+                        label: 'موتوسيكل',
+                        subtitle: 'فرد واحد فوري',
+                        onTap: () => setState(() => vehicle = VehicleType.MOTORCYCLE),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _VehicleCard(
+                        selected: vehicle == VehicleType.CAR,
+                        icon: Icons.directions_car,
+                        label: 'سيارة',
+                        subtitle: 'عالي ومريح',
+                        onTap: () => setState(() => vehicle = VehicleType.CAR),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _VehicleCard(
+                        selected: vehicle == VehicleType.TOKTOK,
+                        icon: Icons.electric_rickshaw,
+                        label: 'توكتوك',
+                        subtitle: 'اقتصادي وسريع',
+                        onTap: () => setState(() => vehicle = VehicleType.TOKTOK),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: loading ? null : _confirmTaxiOrder,
+                    icon: loading
+                        ? const SizedBox(
+                            height: 18,
+                            width: 18,
+                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                        : const Icon(Icons.auto_awesome, size: 18),
+                    label: const Text('تأكيد وطلب المشوار الآن'),
+                  ),
+                ),
+              ],
             ],
           ),
         );
@@ -172,49 +384,197 @@ class _HomeTab extends StatelessWidget {
   }
 }
 
-class _CategoryCard extends StatelessWidget {
-  final OrderCategory category;
+/// كارت الخدمة العلوي (صيدلية / مطاعم / مشوار / سوبر ماركت / طرد)
+class _ServiceCard extends StatelessWidget {
+  final bool selected;
   final String label;
+  final String subtitle;
   final IconData icon;
-  final AppUser user;
-  const _CategoryCard(
-      {required this.category, required this.label, required this.icon, required this.user});
+  final VoidCallback onTap;
+  const _ServiceCard({
+    required this.selected,
+    required this.label,
+    required this.subtitle,
+    required this.icon,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(24),
+      color: selected ? AppColors.primary : Colors.white,
+      borderRadius: BorderRadius.circular(20),
       child: InkWell(
-        borderRadius: BorderRadius.circular(24),
-        onTap: () {
-          if (category == OrderCategory.TAXI) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => NewTaxiOrderScreen(user: user)),
-            );
-          } else if (category == OrderCategory.FOOD) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => RestaurantsListScreen(user: user)),
-            );
-          } else {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                  builder: (_) => NewQuickOrderScreen(user: user, category: category)),
-            );
-          }
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(16),
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Container(
+          width: 96,
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, color: AppColors.primary, size: 34),
-              const SizedBox(height: 10),
+              Icon(icon, color: selected ? Colors.white : AppColors.primary, size: 28),
+              const SizedBox(height: 8),
               Text(label,
-                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                      color: selected ? Colors.white : Colors.black87)),
+              const SizedBox(height: 2),
+              Text(subtitle,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontSize: 10,
+                      color: selected ? Colors.white70 : Colors.black45)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// قسم اختيار نقطة (انطلاق أو وصول): مركز + قرية + تفاصيل العنوان
+class _LocationSection extends StatelessWidget {
+  final Color color;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final DistrictData? district;
+  final VillageData? village;
+  final TextEditingController detailCtrl;
+  final ValueChanged<DistrictData?> onDistrictChanged;
+  final ValueChanged<VillageData?> onVillageChanged;
+  const _LocationSection({
+    required this.color,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.district,
+    required this.village,
+    required this.detailCtrl,
+    required this.onDistrictChanged,
+    required this.onVillageChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                    color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(14)),
+                child: Icon(icon, color: color, size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
+                    Text(subtitle, style: const TextStyle(fontSize: 11, color: Colors.black45)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<VillageData>(
+                  value: village,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'اختر القرية',
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  ),
+                  items: (district?.villages ?? const <VillageData>[])
+                      .map((v) => DropdownMenuItem(value: v, child: Text(v.name, overflow: TextOverflow.ellipsis)))
+                      .toList(),
+                  onChanged: district == null ? null : onVillageChanged,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: DropdownButtonFormField<DistrictData>(
+                  value: district,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'اختر المركز',
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  ),
+                  items: menofiaDistricts
+                      .map((d) => DropdownMenuItem(value: d, child: Text(d.name, overflow: TextOverflow.ellipsis)))
+                      .toList(),
+                  onChanged: onDistrictChanged,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: detailCtrl,
+            decoration: const InputDecoration(
+              hintText: 'رقم المنزل، الشارع، علامة مميزة...',
+              contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// كارت اختيار نوع المركبة (موتوسيكل / سيارة / توكتوك)
+class _VehicleCard extends StatelessWidget {
+  final bool selected;
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final VoidCallback onTap;
+  const _VehicleCard({
+    required this.selected,
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? AppColors.primary : Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
+          child: Column(
+            children: [
+              Icon(icon, color: selected ? Colors.white : AppColors.primary, size: 26),
+              const SizedBox(height: 6),
+              Text(label,
+                  style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 13,
+                      color: selected ? Colors.white : Colors.black87)),
+              const SizedBox(height: 2),
+              Text(subtitle,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 10, color: selected ? Colors.white70 : Colors.black45)),
             ],
           ),
         ),
