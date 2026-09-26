@@ -68,6 +68,11 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
               );
             },
           ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'تسجيل الخروج',
+            onPressed: () => FirebaseService.instance.signOut(),
+          ),
         ],
       ),
       body: Column(

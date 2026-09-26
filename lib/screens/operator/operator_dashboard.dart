@@ -23,7 +23,14 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('تحكم أشمون'),
-        actions: [_NotifBell(user: widget.user)],
+        actions: [
+          _NotifBell(user: widget.user),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'تسجيل الخروج',
+            onPressed: () => FirebaseService.instance.signOut(),
+          ),
+        ],
       ),
       body: Column(
         children: [

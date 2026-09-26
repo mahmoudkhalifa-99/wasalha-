@@ -28,6 +28,63 @@ workflows:
             echo "مجلد android موجود بالفعل"
           fi
 
+      - name: إعداد توقيع الـ Release (keystore ثابت)
+        script: |
+          if [ -n "${CM_KEYSTORE:-}" ] && [ -n "${CM_KEYSTORE_PASSWORD:-}" ] && [ -n "${CM_KEY_ALIAS:-}" ] && [ -n "${CM_KEY_PASSWORD:-}" ]; then
+            echo "$CM_KEYSTORE" | base64 --decode > android/app/keystore.jks
+            cat > android/key.properties <<KEYEOF
+          storePassword=$CM_KEYSTORE_PASSWORD
+          keyPassword=$CM_KEY_PASSWORD
+          keyAlias=$CM_KEY_ALIAS
+          storeFile=keystore.jks
+          KEYEOF
+            python3 - <<'PYEOF'
+          import sys
+          path = "android/app/build.gradle.kts"
+          with open(path) as f:
+              content = f.read()
+
+          if "keystoreProperties" not in content:
+              header = (
+                  "import java.util.Properties\n"
+                  "import java.io.FileInputStream\n\n"
+                  "val keystoreProperties = Properties()\n"
+                  "val keystorePropertiesFile = rootProject.file(\"key.properties\")\n"
+                  "if (keystorePropertiesFile.exists()) {\n"
+                  "    keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n"
+                  "}\n\n"
+              )
+              content = header + content
+
+          if "signingConfigs {" not in content:
+              content = content.replace(
+                  "android {",
+                  "android {\n"
+                  "    signingConfigs {\n"
+                  "        create(\"release\") {\n"
+                  "            keyAlias = keystoreProperties[\"keyAlias\"] as String?\n"
+                  "            keyPassword = keystoreProperties[\"keyPassword\"] as String?\n"
+                  "            storeFile = keystoreProperties[\"storeFile\"]?.let { file(it) }\n"
+                  "            storePassword = keystoreProperties[\"storePassword\"] as String?\n"
+                  "        }\n"
+                  "    }\n",
+                  1,
+              )
+
+          content = content.replace(
+              'signingConfig = signingConfigs.getByName("debug")',
+              'signingConfig = signingConfigs.getByName("release")',
+              1,
+          )
+
+          with open(path, "w") as f:
+              f.write(content)
+          PYEOF
+            echo "تم إعداد توقيع الـ Release بالـ keystore الثابت"
+          else
+            echo "تنبيه: متغيرات الـ keystore (CM_KEYSTORE, CM_KEYSTORE_PASSWORD, CM_KEY_ALIAS, CM_KEY_PASSWORD) مش موجودة - هيتم التوقيع بمفتاح debug مؤقت (مش هيشتغل تسجيل الدخول بجوجل)"
+          fi
+
       - name: تفعيل Core Library Desugaring (مطلوب لـ flutter_local_notifications)
         script: |
           GRADLE_FILE="android/app/build.gradle.kts"
@@ -87,6 +144,10 @@ workflows:
 
       - name: تثبيت الباكدجات
         script: flutter pub get
+
+      - name: توليد أيقونة التطبيق (launcher icon)
+        script: |
+          dart run flutter_launcher_icons
 
       - name: حقن مفتاح Gemini (لو موجود كمتغيّر بيئة)
         script: |
