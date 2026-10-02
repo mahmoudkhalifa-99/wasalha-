@@ -9,7 +9,12 @@ const Map<OrderStatus, List<OrderStatus>> _validTransitions = {
   OrderStatus.draft: [OrderStatus.pending, OrderStatus.cancelled],
   OrderStatus.pending: [OrderStatus.assigned, OrderStatus.cancelled],
   OrderStatus.assigned: [OrderStatus.picked, OrderStatus.cancelled],
-  OrderStatus.picked: [OrderStatus.inDelivery, OrderStatus.cancelled],
+  // الواجهة بتنقل الطلب من PICKED لـ DELIVERED مباشرة (مفيش زر لـ IN_DELIVERY)
+  OrderStatus.picked: [
+    OrderStatus.inDelivery,
+    OrderStatus.delivered,
+    OrderStatus.cancelled
+  ],
   OrderStatus.inDelivery: [OrderStatus.delivered, OrderStatus.cancelled],
   OrderStatus.delivered: [],
   OrderStatus.cancelled: [],
@@ -152,6 +157,57 @@ Future<void> updateOrderStatus(
     }
 
     await orderRef.update(updates);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.update, 'orders/$orderId');
+  }
+}
+
+/// اعتذار الكابتن: الطلب يرجع PENDING ويتشال منه بيانات الكابتن في تحديث واحد.
+Future<void> releaseOrderFromCourier(String orderId, String courierId) async {
+  try {
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final orderRef = db.collection('orders').doc(orderId);
+    final snap = await orderRef.get();
+    if (!snap.exists) throw Exception('Order not found');
+    final order = Order.fromMap(snap.data()!, snap.id);
+
+    if (order.assignedTo != courierId && order.driverId != courierId) {
+      throw Exception('Unauthorized');
+    }
+    if (order.status != OrderStatus.assigned &&
+        order.status != OrderStatus.picked) {
+      throw Exception('لا يمكن الاعتذار عن مشوار في هذه الحالة');
+    }
+
+    await orderRef.update({
+      'status': OrderStatus.pending.value,
+      'updatedAt': timestamp,
+      'statusHistory': FieldValue.arrayUnion([
+        StatusHistoryItem(
+          status: OrderStatus.pending,
+          changedAt: timestamp,
+          changedBy: courierId,
+        ).toMap()
+      ]),
+      'driverId': FieldValue.delete(),
+      'driverName': FieldValue.delete(),
+      'driverPhone': FieldValue.delete(),
+      'driverPhoto': FieldValue.delete(),
+      'acceptedAt': FieldValue.delete(),
+      'assignedTo': FieldValue.delete(),
+    });
+
+    try {
+      final courierDocs = await db
+          .collection('couriers')
+          .where('userId', isEqualTo: courierId)
+          .limit(1)
+          .get();
+      if (courierDocs.docs.isNotEmpty) {
+        await courierDocs.docs.first.reference
+            .update({'currentOrdersCount': FieldValue.increment(-1)});
+      }
+    } catch (_) {}
   } catch (error) {
     handleFirestoreError(error, OperationType.update, 'orders/$orderId');
   }

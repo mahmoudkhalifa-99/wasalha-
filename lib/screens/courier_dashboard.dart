@@ -301,7 +301,7 @@ class _CourierDashboardState extends State<CourierDashboard> {
       await order_service.updateOrderStatus(order.id, status, user.id, user.role);
     } catch (e) {
       if (mounted) {
-        showAppAlert(context, 'فشل تحديث الحالة: ${e.toString()}');
+        showAppAlert(context, 'فشل تحديث الحالة: ${friendlyError(e)}');
       }
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
@@ -337,18 +337,18 @@ class _CourierDashboardState extends State<CourierDashboard> {
 
     setState(() => _isSubmitting = true);
     try {
-      await order_service.updateOrderStatus(
-          order.id, OrderStatus.pending, user.id, user.role);
-      await db.collection('orders').doc(order.id).update({
-        'driverId': FieldValue.delete(),
-        'driverName': FieldValue.delete(),
-        'driverPhone': FieldValue.delete(),
-        'acceptedAt': FieldValue.delete(),
-        'assignedTo': FieldValue.delete(),
-      });
+      await order_service.releaseOrderFromCourier(order.id, user.id);
+      await NotificationService.notifyUser(
+        userId: order.customerId,
+        title: 'الكابتن اعتذر عن مشوارك',
+        body: 'تم إرجاع طلبك لقائمة العروض — اختار كابتن تاني.',
+        type: 'ALERT',
+        key: 'released_${order.id}_${DateTime.now().millisecondsSinceEpoch}',
+        orderId: order.id,
+      );
       if (mounted) showAppAlert(context, 'تم الاعتذار عن المشوار بنجاح');
     } catch (e) {
-      if (mounted) showAppAlert(context, 'فشل الاعتذار');
+      if (mounted) showAppAlert(context, 'فشل الاعتذار: ${friendlyError(e)}');
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }

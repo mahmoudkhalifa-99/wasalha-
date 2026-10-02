@@ -43,3 +43,18 @@ Never handleFirestoreError(
   print('Firestore Security Error Context: ${jsonEncode(info)}');
   throw Exception(jsonEncode(info));
 }
+
+/// نص خطأ مختصر للمستخدم (من غير بيانات الحساب اللي بيضيفها handleFirestoreError).
+String friendlyError(Object e) {
+  var t = e.toString().replaceFirst('Exception: ', '');
+  try {
+    final m = jsonDecode(t);
+    if (m is Map && m['error'] != null) {
+      t = m['error'].toString().replaceFirst('Exception: ', '');
+    }
+  } catch (_) {}
+  if (t.contains('permission-denied')) {
+    t = 'مفيش صلاحية لتنفيذ العملية (راجع قواعد Firestore)';
+  }
+  return t;
+}
