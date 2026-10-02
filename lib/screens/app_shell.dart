@@ -5,11 +5,13 @@ import 'package:cloud_firestore/cloud_firestore.dart' hide Order, Blob;
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app_router.dart';
 import '../constants.dart';
 import '../models/models.dart';
+import '../services/back_interceptor.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
 import '../services/permission_service.dart';
@@ -56,6 +58,8 @@ class _AppShellState extends State<AppShell> {
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _notifSub;
   StreamSubscription<String>? _tokenSub;
   String? _pushForUserId;
+  String? _notifKey;
+  String _userSig = '';
 
   @override
   void initState() {
@@ -85,6 +89,8 @@ class _AppShellState extends State<AppShell> {
         } else {
           _userSub?.cancel();
           _notifSub?.cancel();
+          _notifKey = null;
+          _userSig = '';
           NotificationService.stop();
           if (!mounted) return;
           setState(() {
@@ -114,15 +120,26 @@ class _AppShellState extends State<AppShell> {
     final userRef = db.collection('users').doc(uid);
     _userSub = userRef.snapshots().listen((docSnap) async {
       if (docSnap.exists) {
-        final data = AppUser.fromMap(
-            stripFirestore(docSnap.data()) as Map<String, dynamic>, docSnap.id);
+        final raw = stripFirestore(docSnap.data()) as Map<String, dynamic>;
+        final data = AppUser.fromMap(raw, docSnap.id);
         if (!mounted) return;
-        setState(() {
-          _user = data;
-          _loading = false;
-          _connectionError = false;
-        });
+        // موقع الكابتن بيتكتب كل ~10 متر: ما نعيدش بناء التطبيق كله بسببه.
+        final sig = (Map<String, dynamic>.of(raw)
+              ..remove('location')
+              ..remove('lastTokenUpdate'))
+            .toString();
+        if (_user == null || sig != _userSig || _loading || _connectionError) {
+          _userSig = sig;
+          setState(() {
+            _user = data;
+            _loading = false;
+            _connectionError = false;
+          });
+        }
 
+        final notifKey = '${data.id}|${data.role.value}';
+        if (_notifKey != notifKey) {
+          _notifKey = notifKey;
         _notifSub?.cancel();
         _notifSub = db
             .collection('notifications')
@@ -132,9 +149,11 @@ class _AppShellState extends State<AppShell> {
           final unread =
               snap.docs.where((d) => d.data()['read'] != true).length;
           if (mounted) setState(() => _unreadCount = unread);
+          NotificationService.handleSnapshot(snap, data.id);
         }, onError: (err) {
           debugPrint('Notifications listener: $err');
         });
+        }
 
         _setupPush(data.id);
         NotificationService.startFor(data.id, data.role.value);
@@ -219,6 +238,8 @@ class _AppShellState extends State<AppShell> {
     await auth.signOut();
     _userSub?.cancel();
     _notifSub?.cancel();
+    _notifKey = null;
+    _userSig = '';
     _pushForUserId = null;
     if (!mounted) return;
     setState(() {
@@ -255,7 +276,13 @@ class _AppShellState extends State<AppShell> {
     final headerHeight = md ? 84.0 : 68.0;
     final top = MediaQuery.of(context).padding.top;
 
-    return AppRouter(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _handleBack();
+      },
+      child: AppRouter(
       location: _location,
       go: (path) => setState(() {
         if (path == '/') {
@@ -285,7 +312,44 @@ class _AppShellState extends State<AppShell> {
           ],
         ),
       ),
-    );
+    ));
+  }
+
+  DateTime? _lastBack;
+
+  void _handleBack() {
+    if (_isLogoutModalOpen) {
+      setState(() => _isLogoutModalOpen = false);
+      return;
+    }
+    if (_showNotifications || _showSupport) {
+      setState(() {
+        _showNotifications = false;
+        _showSupport = false;
+      });
+      return;
+    }
+    if (_stack.length > 1) {
+      setState(() => _stack.removeLast());
+      return;
+    }
+    if (BackInterceptor.handle()) return;
+    // الصفحة الرئيسية: ضغطتين رجوع للخروج
+    final now = DateTime.now();
+    if (_lastBack == null || now.difference(_lastBack!) > const Duration(seconds: 2)) {
+      _lastBack = now;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+          content: Text('اضغط رجوع مرة تانية للخروج',
+              textAlign: TextAlign.center,
+              style: T.s(13, T.w700, C.white)),
+        ));
+      return;
+    }
+    SystemNavigator.pop();
   }
 
   Widget _content() {

@@ -9,6 +9,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/models.dart';
+import '../services/back_interceptor.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
 import '../services/order_service.dart' as order_service;
@@ -55,18 +56,27 @@ class _CourierDashboardState extends State<CourierDashboard> {
   @override
   void initState() {
     super.initState();
+    BackInterceptor.register(_onBack);
     _setOnlineFlag(_isOnline);
     _startLocationWatch();
     _listenOrders();
   }
 
-  @override
-  void didUpdateWidget(covariant CourierDashboard oldWidget) {
-    super.didUpdateWidget(oldWidget);
+  bool _onBack() {
+    if (_showChat) {
+      setState(() => _showChat = false);
+      return true;
+    }
+    if (_activeView != _CourierView.home) {
+      setState(() => _activeView = _CourierView.home);
+      return true;
+    }
+    return false;
   }
 
   @override
   void dispose() {
+    BackInterceptor.unregister(_onBack);
     _posSub?.cancel();
     _subCustomer?.cancel();
     _subAvailable?.cancel();
@@ -131,14 +141,29 @@ class _CourierDashboardState extends State<CourierDashboard> {
     }
   }
 
-  Future<void> _recalcRoute() async {
+  DateTime? _lastRouteAt;
+  String? _lastRouteDest;
+
+  Future<void> _recalcRoute({bool force = false}) async {
     final order = _activeOrder;
     if (order == null) {
-      if (mounted) setState(() => _routeGeometry = []);
+      _lastRouteDest = null;
+      if (mounted && _routeGeometry.isNotEmpty) setState(() => _routeGeometry = []);
       return;
     }
     final dest =
         order.status == OrderStatus.assigned ? order.pickup : order.dropoff;
+    // ما نطلبش المسار من الخادم مع كل تحديث GPS: كل 15 ثانية أو لما الوجهة تتغير.
+    final destKey = '${order.id}|${order.status.value}';
+    final now = DateTime.now();
+    if (!force &&
+        destKey == _lastRouteDest &&
+        _lastRouteAt != null &&
+        now.difference(_lastRouteAt!) < const Duration(seconds: 15)) {
+      return;
+    }
+    _lastRouteDest = destKey;
+    _lastRouteAt = now;
     try {
       final geo = await utils.getRouteGeometry(_currentLocation.latitude,
           _currentLocation.longitude, dest.lat, dest.lng);
@@ -220,7 +245,7 @@ class _CourierDashboardState extends State<CourierDashboard> {
       if (!mounted) return;
       setState(() => _activeOrder = active);
       if (changed) {
-        _recalcRoute();
+        _recalcRoute(force: true);
         _listenCustomerLocation();
       }
     }, onError: (e) =>
@@ -299,6 +324,16 @@ class _CourierDashboardState extends State<CourierDashboard> {
     setState(() => _isSubmitting = true);
     try {
       await order_service.updateOrderStatus(order.id, status, user.id, user.role);
+      if (status == OrderStatus.picked) {
+        await NotificationService.notifyUser(
+          userId: order.customerId,
+          title: 'الكابتن استلم طلبك 🛵',
+          body: 'أول ما يوصلك اضغط "تم الاستلام بالفعل" في التطبيق.',
+          type: 'INFO',
+          key: 'picked_${order.id}',
+          orderId: order.id,
+        );
+      }
     } catch (e) {
       if (mounted) {
         showAppAlert(context, 'فشل تحديث الحالة: ${friendlyError(e)}');
@@ -843,7 +878,7 @@ class _CourierDashboardState extends State<CourierDashboard> {
                           style: T.s(10, T.w900, C.emerald600,
                               letterSpacing: 1.2)),
                       const SizedBox(height: 2),
-                      Text(order.status.value,
+                      Text(order.status.labelAr,
                           style: T.s(20, T.w900, C.slate950)),
                     ],
                   ),
@@ -1025,7 +1060,7 @@ class _CourierDashboardState extends State<CourierDashboard> {
                 )
               else if (isPicked)
                 PressScale(
-                  onTap: _isSubmitting
+                  onTap: (_isSubmitting || !order.customerReceived)
                       ? null
                       : () => _updateOrderStatus(OrderStatus.delivered),
                   child: Container(
@@ -1033,14 +1068,20 @@ class _CourierDashboardState extends State<CourierDashboard> {
                     padding: const EdgeInsets.symmetric(vertical: 24),
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: C.emerald600,
+                      color: order.customerReceived ? C.emerald600 : C.slate200,
                       borderRadius: BorderRadius.circular(24),
-                      boxShadow: Sh.xl(color: C.emerald600.withOpacity(0.3)),
+                      boxShadow: order.customerReceived
+                          ? Sh.xl(color: C.emerald600.withOpacity(0.3))
+                          : null,
                     ),
                     child: _isSubmitting
                         ? const Spinner()
-                        : Text('تأكيد التسليم النهائي',
-                            style: T.s(16, T.w900, C.white)),
+                        : Text(
+                            order.customerReceived
+                                ? 'تأكيد التسليم النهائي'
+                                : 'بانتظار تأكيد العميل للاستلام...',
+                            style: T.s(16, T.w900,
+                                order.customerReceived ? C.white : C.slate500)),
                   ),
                 ),
               const SizedBox(height: 8),

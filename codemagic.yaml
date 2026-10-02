@@ -165,10 +165,10 @@ workflows:
           fi
 
       - name: بناء APK
-        script: flutter build apk --release
+        script: flutter build apk --release --dart-define=PUSH_RELAY_URL=${PUSH_RELAY_URL:-}
 
       - name: بناء App Bundle (للنشر على Google Play)
-        script: flutter build appbundle --release
+        script: flutter build appbundle --release --dart-define=PUSH_RELAY_URL=${PUSH_RELAY_URL:-}
     artifacts:
       - build/app/outputs/flutter-apk/*.apk
       - build/app/outputs/bundle/release/*.aab

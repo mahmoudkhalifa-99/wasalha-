@@ -116,11 +116,16 @@ class GlassBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // لما الخلفية شبه معتمة (>= 85%) البلور مش بيبان وبيتقّل الأداء، فبنتخطاه.
+    final skipBlur = sigma <= 0 || (gradient == null && color.opacity >= 0.85);
+    Widget blurred(Widget c) => skipBlur
+        ? c
+        : BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma), child: c);
     final inner = ClipRRect(
       borderRadius: borderRadius,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
-        child: Container(
+      child: blurred(
+        Container(
           padding: padding,
           decoration: BoxDecoration(
             color: gradient == null ? color : null,

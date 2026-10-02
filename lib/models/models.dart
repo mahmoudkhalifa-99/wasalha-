@@ -119,6 +119,25 @@ enum OrderStatus {
 
   final String value;
   const OrderStatus(this.value);
+  String get labelAr {
+    switch (this) {
+      case OrderStatus.draft:
+        return 'مسودة';
+      case OrderStatus.pending:
+        return 'بانتظار عروض الكباتن';
+      case OrderStatus.assigned:
+        return 'الكابتن في الطريق للاستلام';
+      case OrderStatus.picked:
+        return 'تم استلام الطلب - في الطريق إليك';
+      case OrderStatus.inDelivery:
+        return 'جاري التوصيل';
+      case OrderStatus.delivered:
+        return 'تم التسليم';
+      case OrderStatus.cancelled:
+        return 'ملغي';
+    }
+  }
+
   static OrderStatus parse(String? s) => values
       .firstWhere((e) => e.value == s, orElse: () => OrderStatus.pending);
 }
@@ -604,6 +623,7 @@ class Order {
   final String? restaurantId;
   final String? restaurantName;
   final String? specialRequest;
+  final bool customerReceived; // العميل أكد إنه استلم الطلب فعلاً
 
   const Order({
     required this.id,
@@ -647,6 +667,7 @@ class Order {
     this.restaurantId,
     this.restaurantName,
     this.specialRequest,
+    this.customerReceived = false,
   });
 
   factory Order.fromMap(Map<String, dynamic> m, [String? docId]) => Order(
@@ -700,6 +721,7 @@ class Order {
         restaurantId: m['restaurantId'] as String?,
         restaurantName: m['restaurantName'] as String?,
         specialRequest: m['specialRequest'] as String?,
+        customerReceived: m['customerReceived'] == true,
       );
 
   Map<String, dynamic> toMap() => stripFirestore({

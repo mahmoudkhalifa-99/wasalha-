@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../config_constants.dart';
 import '../models/models.dart';
+import '../services/back_interceptor.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
 import '../services/order_service.dart' as order_service;
@@ -83,9 +84,30 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
 
   AppUser get user => widget.user;
 
+  bool _onBack() {
+    if (_showChat) {
+      setState(() => _showChat = false);
+      return true;
+    }
+    if (_viewingRestaurant != null) {
+      setState(() => _viewingRestaurant = null);
+      return true;
+    }
+    if (_showManualRest) {
+      setState(() => _showManualRest = false);
+      return true;
+    }
+    if (_activeView != _DashView.newOrder) {
+      setState(() => _activeView = _DashView.newOrder);
+      return true;
+    }
+    return false;
+  }
+
   @override
   void initState() {
     super.initState();
+    BackInterceptor.register(_onBack);
 
     _subRestaurants = db
         .collection('restaurants')
@@ -150,6 +172,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
 
   @override
   void dispose() {
+    BackInterceptor.unregister(_onBack);
     _subRestaurants?.cancel();
     _subAds?.cancel();
     _subOrders?.cancel();
@@ -199,10 +222,23 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         if (loc is Map) {
           final lat = (loc['lat'] as num).toDouble();
           final lng = (loc['lng'] as num).toDouble();
-          setState(() => _driverLoc = ll.LatLng(lat, lng));
+          final newLoc = ll.LatLng(lat, lng);
+          final moved = _driverLoc == null ||
+              (_driverLoc!.latitude - lat).abs() > 0.00005 ||
+              (_driverLoc!.longitude - lng).abs() > 0.00005;
+          if (!moved) return; // نفس المكان: مفيش داعي لإعادة البناء
+          setState(() => _driverLoc = newLoc);
           final dest = order.status == OrderStatus.assigned
               ? order.pickup
               : order.dropoff;
+          // المسار: مرة كل 15 ثانية بحد أقصى
+          final now = DateTime.now();
+          if (_lastRouteAt != null &&
+              now.difference(_lastRouteAt!) < const Duration(seconds: 15) &&
+              _routeGeometry.isNotEmpty) {
+            return;
+          }
+          _lastRouteAt = now;
           final geo = await utils.getRouteGeometry(lat, lng, dest.lat, dest.lng);
           if (mounted) {
             setState(() => _routeGeometry =
@@ -353,39 +389,6 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         orderId: newOrderId,
       );
 
-      // بناء رسالة واتساب تفصيلية وشاملة (نفس نص نسخة الويب بالظبط)
-      final catLabel = _selectedCategory == OrderCategory.taxi
-          ? '🚖 مشوار'
-          : _selectedCategory == OrderCategory.food
-              ? '🍔 طلب أكل'
-              : '💊 صيدلية';
-      final vehicleLabel = _selectedVehicle == VehicleType.toktok
-          ? 'توكتوك 🛺'
-          : _selectedVehicle == VehicleType.motorcycle
-              ? 'موتوسيكل 🏍️'
-              : 'سيارة 🚗';
-
-      var foodSummary = '';
-      if (foodItems != null && foodItems.isNotEmpty) {
-        foodSummary = '\n📋 *الأصناف المطلوبة:*\n' +
-            foodItems.map((i) => '- ${i.name} (عدد: ${i.quantity})').join('\n');
-      }
-
-      final whatsappMsg = '*📢 طلب جديد من تطبيق وصلها*\n\n'
-          '👤 *العميل:* ${user.name}\n'
-          '📱 *الهاتف:* ${user.phone}\n'
-          '📂 *القسم:* $catLabel\n'
-          '📍 *الانطلاق:* ${orderPickup?.villageName ?? "غير محدد"}\n'
-          '🏁 *التوصيل:* ${finalVillage.name}\n'
-          '🛵 *المركبة:* $vehicleLabel\n'
-          '💰 *التكلفة:* $orderPrice ج.م\n'
-          '${specialRequest != null ? "📝 *ملاحظة:* $specialRequest\n" : ""}'
-          '$foodSummary'
-          '\n\n_تم الإرسال من تطبيق وصلها المنوفية_';
-
-      final url = Uri.parse(
-          'https://wa.me/201065019364?text=${Uri.encodeComponent(whatsappMsg)}');
-      await launchUrl(url, mode: LaunchMode.externalApplication);
     } catch (e) {
       if (mounted) showAppAlert(context, 'خطأ في إرسال الطلب');
     } finally {
@@ -1222,6 +1225,79 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     }
   }
 
+  bool _confirmingReceipt = false;
+  DateTime? _lastRouteAt;
+
+  Future<void> _confirmReceipt(Order order) async {
+    if (_confirmingReceipt) return;
+    setState(() => _confirmingReceipt = true);
+    try {
+      await db.collection('orders').doc(order.id).update({
+        'customerReceived': true,
+        'customerReceivedAt': DateTime.now().millisecondsSinceEpoch,
+      });
+      if (order.driverId != null) {
+        await NotificationService.notifyUser(
+          userId: order.driverId!,
+          title: 'العميل أكد الاستلام ✅',
+          body: 'تقدر دلوقتي تضغط "تأكيد التسليم النهائي".',
+          type: 'SUCCESS',
+          key: 'received_${order.id}',
+          orderId: order.id,
+        );
+      }
+    } catch (e) {
+      if (mounted) showAppAlert(context, 'تعذر تأكيد الاستلام: ${friendlyError(e)}');
+    } finally {
+      if (mounted) setState(() => _confirmingReceipt = false);
+    }
+  }
+
+  Widget _receiptConfirmCard(Order order) {
+    final done = order.customerReceived;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: done ? C.emerald50 : C.white,
+        borderRadius: BorderRadius.circular(32),
+        border: Border.all(color: done ? C.emerald100 : C.emerald500, width: 2),
+        boxShadow: Sh.xl(color: C.emerald900.withOpacity(0.06)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+              done
+                  ? 'تم تأكيد استلامك ✅ — بانتظار تأكيد الكابتن النهائي'
+                  : 'استلمت طلبك؟ اضغط الزر عشان الكابتن يقدر يُنهي المشوار',
+              textAlign: TextAlign.center,
+              style: T.s(13, T.w900, done ? C.emerald700 : C.slate900,
+                  height: 1.5)),
+          if (!done) ...[
+            const SizedBox(height: 14),
+            PressScale(
+              onTap: _confirmingReceipt ? null : () => _confirmReceipt(order),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: C.emerald600,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: Sh.lg(),
+                ),
+                child: _confirmingReceipt
+                    ? const Spinner()
+                    : Text('تم الاستلام بالفعل',
+                        style: T.s(16, T.w900, C.white)),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Future<void> _cancelPendingOrder(Order order) async {
     try {
       await db
@@ -1529,6 +1605,9 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
           ),
           const SizedBox(height: 32),
         ],
+        if (order.status == OrderStatus.picked ||
+            order.status == OrderStatus.inDelivery)
+          _receiptConfirmCard(order),
         Container(
           padding: const EdgeInsets.all(32),
           decoration: BoxDecoration(
@@ -1555,8 +1634,8 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                       style: T.s(11, T.w900, C.white.withOpacity(0.6),
                           letterSpacing: 1.2)),
                   const SizedBox(height: 2),
-                  Text(order.status.value,
-                      style: T.s(22, T.w900, C.white)),
+                  Text(order.status.labelAr,
+                      style: T.s(18, T.w900, C.white)),
                 ],
               ),
             ],
@@ -2226,6 +2305,14 @@ class RestaurantMenuView extends StatefulWidget {
 }
 
 class _RestaurantMenuViewState extends State<RestaurantMenuView> {
+  bool _onBack() {
+    if (_showFullMenuImage) {
+      setState(() => _showFullMenuImage = false);
+      return true;
+    }
+    return false;
+  }
+
   final List<CartItem> _cart = [];
   final _specialRequestCtrl = TextEditingController();
   bool _showFullMenuImage = false;
@@ -2238,6 +2325,7 @@ class _RestaurantMenuViewState extends State<RestaurantMenuView> {
   @override
   void initState() {
     super.initState();
+    BackInterceptor.register(_onBack);
     _currentDistrict = widget.initialDistrict;
     _currentVillage = widget.initialDropoffVillage;
     if (_currentVillage != null) _recalc();
@@ -2245,6 +2333,7 @@ class _RestaurantMenuViewState extends State<RestaurantMenuView> {
 
   @override
   void dispose() {
+    BackInterceptor.unregister(_onBack);
     _specialRequestCtrl.dispose();
     super.dispose();
   }

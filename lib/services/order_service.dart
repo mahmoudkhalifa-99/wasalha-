@@ -123,6 +123,13 @@ Future<void> updateOrderStatus(
       throw Exception('Unauthorized');
     }
 
+    // التسليم النهائي: لازم العميل يكون أكد الاستلام الأول
+    if (newStatus == OrderStatus.delivered &&
+        userRole == UserRole.driver &&
+        !order.customerReceived) {
+      throw Exception('لازم العميل يضغط "تم الاستلام" أولاً قبل التسليم النهائي');
+    }
+
     // Lifecycle Validation
     if (!isValidTransition(order.status, newStatus)) {
       throw Exception(

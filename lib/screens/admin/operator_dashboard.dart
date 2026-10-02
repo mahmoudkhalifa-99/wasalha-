@@ -244,19 +244,19 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
             ],
           ),
           Container(
-            padding: const EdgeInsets.all(8),
+            width: double.infinity,
+            padding: const EdgeInsets.all(6),
             decoration: BoxDecoration(
               color: C.slate50,
-              borderRadius: BorderRadius.circular(32),
+              borderRadius: BorderRadius.circular(28),
             ),
             child: Row(
-              mainAxisSize: MainAxisSize.min,
               children: [
-                _tabChip(_OpTab.history, LucideIcons.clock, 'السجل', null),
-                const SizedBox(width: 8),
-                _tabChip(_OpTab.drivers, LucideIcons.bike, 'الكباتن', approvedCount),
-                const SizedBox(width: 8),
-                _tabChip(_OpTab.live, LucideIcons.zap, 'النشاط', _liveOrders.length),
+                Expanded(child: _tabChip(_OpTab.history, LucideIcons.clock, 'السجل', null)),
+                const SizedBox(width: 4),
+                Expanded(child: _tabChip(_OpTab.drivers, LucideIcons.bike, 'الكباتن', approvedCount)),
+                const SizedBox(width: 4),
+                Expanded(child: _tabChip(_OpTab.live, LucideIcons.zap, 'النشاط', _liveOrders.length)),
               ],
             ),
           ),
@@ -270,13 +270,15 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
     return GestureDetector(
       onTap: () => setState(() => _activeTab = tab),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 14),
         decoration: BoxDecoration(
           color: active ? C.slate950 : null,
           borderRadius: BorderRadius.circular(20),
           boxShadow: active ? Sh.xxl() : null,
         ),
-        child: Row(
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, size: 16, color: active ? C.white : C.slate400),
@@ -298,6 +300,7 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
               ),
             ],
           ],
+          ),
         ),
       ),
     );

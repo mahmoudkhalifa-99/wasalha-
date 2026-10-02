@@ -4,12 +4,15 @@
 // ونحوّله لرقم إشعار ثابت. لو وصل نفس الإشعار من أكتر من مسار (Firestore +
 // FCM) أندرويد بيستبدله بدل ما يكرره.
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart' hide Order, Blob;
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+import '../config/push_config.dart';
 import 'firebase_service.dart';
 
 const String _channelId = 'wasalha_high_importance';
@@ -30,7 +33,7 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
   static bool _inited = false;
 
-  static StreamSubscription? _fsSub, _fcmSub;
+  static StreamSubscription? _fcmSub;
   static String? _startedFor;
 
   static Future<void> init() async {
@@ -109,43 +112,42 @@ class NotificationService {
   static Future<void> startFor(String userId, String roleValue) async {
     await init();
     // بيتنادى مع كل تحديث لوثيقة المستخدم — ما نعيدش التشغيل لنفس المستخدم.
-    if (_startedFor == userId && _fsSub != null) return;
+    if (_startedFor == userId && _fcmSub != null) return;
     await stop();
     _startedFor = userId;
 
     _fcmSub = FirebaseMessaging.onMessage.listen(showFromRemote);
 
-    // مسار Firestore: بيشتغل طول ما التطبيق شغال (مقدمة أو خلفية).
-    // أول snapshot بنتجاهله عشان ما نطلعش إشعارات قديمة.
-    var first = true;
-    _fsSub = db
-        .collection('notifications')
-        .where('userId', whereIn: [userId, 'ALL'])
-        .snapshots()
-        .listen((snap) {
-      if (first) {
-        first = false;
-        return;
-      }
-      for (final ch in snap.docChanges) {
-        if (ch.type != DocumentChangeType.added) continue;
-        final m = ch.doc.data();
-        if (m == null || m['read'] == true) continue;
-        // الإشعارات اللي بتتعمل من الجهاز نفسه (pending writes) مش محتاجة تنبيه.
-        if (ch.doc.metadata.hasPendingWrites) continue;
-        show(
-          key: (m['key'] as String?) ?? 'n_${ch.doc.id}',
-          title: (m['title'] as String?) ?? 'وصلها',
-          body: (m['body'] as String?) ?? '',
-        );
-      }
-    }, onError: (e) => debugPrint('notifications listener: $e'));
+    _firstSnapshot = true;
+  }
+
+  static bool _firstSnapshot = true;
+
+  /// AppShell بيمرّر لنا snapshot الإشعارات (مستمع واحد بس للمجموعة دي).
+  /// أول snapshot بنتجاهله عشان ما نطلعش إشعارات قديمة.
+  static void handleSnapshot(QuerySnapshot<Map<String, dynamic>> snap, String userId) {
+    if (_firstSnapshot) {
+      _firstSnapshot = false;
+      return;
+    }
+    for (final ch in snap.docChanges) {
+      if (ch.type != DocumentChangeType.added) continue;
+      final m = ch.doc.data();
+      if (m == null || m['read'] == true) continue;
+      final target = m['userId'];
+      // إشعارات الأدوار (DRIVER...) بتتعامل معاها شاشة الكابتن (أونلاين بس)
+      if (target != userId && target != 'ALL') continue;
+      if (ch.doc.metadata.hasPendingWrites) continue;
+      show(
+        key: (m['key'] as String?) ?? 'n_${ch.doc.id}',
+        title: (m['title'] as String?) ?? 'وصلها',
+        body: (m['body'] as String?) ?? '',
+      );
+    }
   }
 
   static Future<void> stop() async {
-    await _fsSub?.cancel();
     await _fcmSub?.cancel();
-    _fsSub = null;
     _fcmSub = null;
     _startedFor = null;
   }
@@ -173,6 +175,44 @@ class NotificationService {
       });
     } catch (e) {
       debugPrint('notifyUser failed: $e');
+    }
+    // Push حقيقي والتطبيق مقفول (لو الـ relay متفعّل)
+    unawaited(_relay(
+      userId: userId,
+      title: title,
+      body: body,
+      key: key,
+      orderId: orderId,
+    ));
+  }
+
+  static Future<void> _relay({
+    required String userId,
+    required String title,
+    required String body,
+    String? key,
+    String? orderId,
+  }) async {
+    if (pushRelayUrl.isEmpty) return;
+    try {
+      final idToken = await auth.currentUser?.getIdToken();
+      if (idToken == null) return;
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+      final req = await client.postUrl(Uri.parse(pushRelayUrl));
+      req.headers.contentType = ContentType.json;
+      req.write(jsonEncode({
+        'idToken': idToken,
+        'userId': userId,
+        'title': title,
+        'body': body,
+        if (key != null) 'key': key,
+        if (orderId != null) 'orderId': orderId,
+      }));
+      final res = await req.close().timeout(const Duration(seconds: 12));
+      await res.drain();
+      client.close();
+    } catch (e) {
+      debugPrint('push relay failed: $e');
     }
   }
 }
