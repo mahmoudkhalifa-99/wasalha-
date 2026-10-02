@@ -23,10 +23,17 @@ workflows:
         script: |
           if [ ! -f "android/app/build.gradle" ] && [ ! -f "android/app/build.gradle.kts" ]; then
             echo "مجلد android مش موجود - جاري توليده..."
-            flutter create --platforms=android --org com.wasalah .
+            flutter create --platforms=android --org com.wasalah --project-name wasalha .
           else
             echo "مجلد android موجود بالفعل"
           fi
+
+      - name: تطبيق إعدادات وصلها على مشروع الأندرويد (applicationId + صلاحيات + أيقونات)
+        script: |
+          if [ -n "${GOOGLE_SERVICES_JSON:-}" ]; then
+            echo "$GOOGLE_SERVICES_JSON" | base64 --decode > android_overrides/google-services.json
+          fi
+          python3 tools/patch_android.py
 
       - name: إعداد توقيع الـ Release (keystore ثابت)
         script: |
