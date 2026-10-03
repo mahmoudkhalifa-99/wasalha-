@@ -22,6 +22,15 @@ service cloud.firestore {
       ];
     }
 
+    // حسابات مستثناة من تأكيد البريد (لازم تطابق verificationExemptEmails في constants.dart)
+    function exemptEmails() {
+      return [
+        'admin@ashmoun.com',
+        'mahmoudkhalifa.kh91@gmail.com',
+        'superadmin@ashmoun.com'
+      ];
+    }
+
     function me() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
@@ -44,11 +53,11 @@ service cloud.firestore {
       return me().get('status', 'APPROVED') != 'SUSPENDED';
     }
 
-    // البريد لازم يكون متأكد (حسابات جوجل متأكدة تلقائياً، وإيميلات الأدمن مستثناة)
+    // البريد لازم يكون متأكد (حسابات جوجل متأكدة تلقائياً، والمستثنون في exemptEmails)
     function emailOk() {
       return request.auth.token.email_verified == true
           || request.auth.token.firebase.sign_in_provider != 'password'
-          || request.auth.token.email.lower() in adminEmails();
+          || request.auth.token.email.lower() in exemptEmails();
     }
 
     function canWrite() {

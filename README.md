@@ -53,7 +53,7 @@ flutter run
 - للإشعارات والتطبيق مقفول: انشر الـ Cloud Function في `functions/` (شوف `functions/README.md`).
 
 ## تأكيد البريد الإلكتروني
-حسابات الإيميل/الباسورد لازم تأكد بريدها (رابط من Firebase Auth) قبل دخول التطبيق. الأدمن (`adminEmails`) وحسابات جوجل مستثنين. الشاشة: `lib/screens/verify_email_screen.dart`، والبوابة في `app_shell.dart`. تقدر تعدّل نص الإيميل واللغة من Firebase Console ← Authentication ← Templates.
+حسابات الإيميل/الباسورد لازم تأكد بريدها (رابط من Firebase Auth) قبل دخول التطبيق. الحسابات في `verificationExemptEmails` (`lib/constants.dart`) وحسابات جوجل مستثناة. الشاشة: `lib/screens/verify_email_screen.dart`، والبوابة في `app_shell.dart`. تقدر تعدّل نص الإيميل واللغة من Firebase Console ← Authentication ← Templates.
 
 ## قواعد Firestore
 ملف `firestore.rules` في جذر المشروع. انشره من Firebase Console ← Firestore Database ← Rules ← الصق المحتوى ← Publish.
@@ -71,3 +71,6 @@ flutter run
 
 ## تعطيل الحساب
 المدير يعطّل أي حساب غير أدمن من شاشة تعديل العضو. المستخدم بيشوف شاشة "تم تعطيل حسابك" وزر واتساب للمطوّر (`developerWhatsApp` في `lib/constants.dart`).
+
+## المستثنون من تأكيد البريد ورقم الهاتف
+`verificationExemptEmails` في `lib/constants.dart` (admin@ashmoun.com, mahmoudkhalifa.kh91@gmail.com, superadmin@ashmoun.com). لو غيّرت القائمة، غيّر دالة `exemptEmails()` في `firestore.rules` كمان.

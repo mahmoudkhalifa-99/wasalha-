@@ -303,7 +303,7 @@ class _LoginScreenState extends State<LoginScreen> {
   /// بيبعت رابط تأكيد البريد لو الحساب لسه غير مؤكد. فشل الإرسال مش بيوقف
   /// الدخول: شاشة التأكيد فيها زر إعادة إرسال.
   Future<void> _sendVerificationMail(fb.User u) async {
-    if (!needsEmailVerification(u, adminEmails)) return;
+    if (!needsEmailVerification(u)) return;
     try {
       await u.sendEmailVerification();
     } catch (e) {

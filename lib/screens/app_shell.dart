@@ -275,7 +275,7 @@ class _AppShellState extends State<AppShell> {
       return LoginScreen(onLogin: (u) => setState(() => _user = u));
     }
     // لازم يأكد البريد الأول (حسابات الإيميل/الباسورد فقط، الأدمن وجوجل مستثنين)
-    if (needsEmailVerification(auth.currentUser, adminEmails)) {
+    if (needsEmailVerification(auth.currentUser)) {
       return VerifyEmailScreen(
         onVerified: () {
           if (mounted) setState(() {});
@@ -287,8 +287,8 @@ class _AppShellState extends State<AppShell> {
     if (_user!.status == UserStatus.suspended) {
       return SuspendedScreen(name: _user!.name, onLogout: _handleLogout);
     }
-    // رقم الهاتف إجباري لكل الحسابات (جوجل وغيره)
-    if (!isValidPhone(_user!.phone)) {
+    // رقم الهاتف إجباري لكل الحسابات (جوجل وغيره) ما عدا المستثنين
+    if (!isExemptEmail(_user!.email) && !isValidPhone(_user!.phone)) {
       return CompletePhoneScreen(
           userId: _user!.id, name: _user!.name, onLogout: _handleLogout);
     }

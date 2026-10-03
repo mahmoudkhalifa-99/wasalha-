@@ -131,6 +131,17 @@ const List<String> adminEmails = [
   'wasalah.app@gmail.com',
 ];
 
+/// حسابات مستثناة من تأكيد البريد الإلكتروني ومن إلزام رقم الهاتف.
+/// (لازم تطابق دالة exemptEmails() في firestore.rules)
+const List<String> verificationExemptEmails = [
+  'admin@ashmoun.com',
+  'mahmoudkhalifa.kh91@gmail.com',
+  'superadmin@ashmoun.com',
+];
+
+bool isExemptEmail(String? email) =>
+    verificationExemptEmails.contains((email ?? '').trim().toLowerCase());
+
 /// رقم واتساب المطوّر: الحسابات المعطّلة بيرجع لها بس عن طريقه.
 const String developerWhatsApp = '201065019364';
 

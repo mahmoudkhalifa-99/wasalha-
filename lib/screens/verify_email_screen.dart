@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../constants.dart';
 import '../services/firebase_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_shadows.dart';
@@ -11,13 +12,13 @@ import '../theme/app_text.dart';
 import '../widgets/form_fields.dart';
 
 /// هل المستخدم ده لازم يأكد بريده قبل دخول التطبيق؟
-/// - الأدمن مستثنى (حساباتهم بتتعمل من الكونسول).
+/// - الحسابات في verificationExemptEmails مستثناة.
 /// - حسابات جوجل بريدها متأكد تلقائياً (emailVerified = true).
-bool needsEmailVerification(fb.User? u, List<String> adminEmails) {
+bool needsEmailVerification(fb.User? u) {
   if (u == null || u.emailVerified) return false;
   final usesPassword = u.providerData.any((p) => p.providerId == 'password');
   if (!usesPassword) return false;
-  return !adminEmails.contains((u.email ?? '').toLowerCase());
+  return !isExemptEmail(u.email);
 }
 
 /// شاشة تأكيد البريد الإلكتروني: بتبعت رابط تفعيل، وبتتابع الحالة تلقائياً
