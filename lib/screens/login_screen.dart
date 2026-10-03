@@ -342,6 +342,64 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  // ───────────────────────── الواجهة ─────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    if (_showOnboarding) {
+      return OnboardingScreen(
+          onComplete: () => setState(() => _showOnboarding = false));
+    }
+
+    final md = isMd(context);
+    return Scaffold(
+      backgroundColor: C.slate50,
+      resizeToAvoidBottomInset: true,
+      body: Stack(
+        children: [
+          // ── خلفية الزينة (مطابقة لشعار التطبيق) ──
+          Positioned.fill(child: _ambientBackground()),
+
+          SafeArea(
+            child: LayoutBuilder(builder: (context, box) {
+              return SingleChildScrollView(
+                padding: EdgeInsets.symmetric(
+                    horizontal: 16, vertical: md ? 48 : 32),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                      minHeight: (box.maxHeight - (md ? 96 : 64))
+                          .clamp(0.0, double.infinity)),
+                  child: IntrinsicHeight(
+                    child: Column(
+                      children: [
+                        const Spacer(),
+                        Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 512),
+                            child: _card(context, md),
+                          ),
+                        ),
+                        const Spacer(),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 24),
+                          child: Text(
+                            'جميع الحقوق محفوظة © تطبيق وصلها المنوفية • خدمة ذكية على مدار 24 ساعة',
+                            textAlign: TextAlign.center,
+                            style: T.s(12, T.w700, C.slate400),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _ambientBackground() {
     return LayoutBuilder(builder: (context, box) {
       final cx = box.maxWidth / 2, cy = box.maxHeight / 2;

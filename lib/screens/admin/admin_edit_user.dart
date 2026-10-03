@@ -1,42 +1,3 @@
-        final password = Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('كلمة المرور',
-                style: T.s(10, T.w800, C.slate500)),
-            const SizedBox(height: 6),
-            PressScale(
-              scale: 0.97,
-              onTap: _sendingReset ? null : _sendResetEmail,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                decoration: BoxDecoration(
-                  color: C.slate50,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: C.slate200),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(LucideIcons.mail, size: 16, color: C.indigo500),
-                    const SizedBox(width: 8),
-                    Text(
-                        _sendingReset
-                            ? 'جارٍ الإرسال...'
-                            : 'إرسال رابط إعادة تعيين كلمة المرور',
-                        style: T.s(11, T.w800, C.slate700)),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Text('سيصل المستخدم رابط على بريده لتعيين كلمة مرور جديدة.',
-                  style: T.s(8, T.w700, C.slate400)),
-            ),
-          ],
-        );
 import 'package:cloud_firestore/cloud_firestore.dart' hide Order, Blob;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -493,13 +454,38 @@ class _AdminEditUserState extends State<AdminEditUser> {
         final password = Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _labeledField('تعيين كلمة مرور جديدة', _passwordCtrl,
-                ltr: true, icon: LucideIcons.lock),
+            Text('كلمة المرور', style: T.s(10, T.w800, C.slate500)),
+            const SizedBox(height: 6),
+            PressScale(
+              scale: 0.97,
+              onTap: _sendingReset ? null : _sendResetEmail,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                decoration: BoxDecoration(
+                  color: C.slate50,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: C.slate200),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(LucideIcons.mail, size: 16, color: C.indigo500),
+                    const SizedBox(width: 8),
+                    Text(
+                        _sendingReset
+                            ? 'جارٍ الإرسال...'
+                            : 'إرسال رابط إعادة تعيين كلمة المرور',
+                        style: T.s(11, T.w800, C.slate700)),
+                  ],
+                ),
+              ),
+            ),
             const SizedBox(height: 4),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Text('تنبيه: سيتم تسجيل الدخول بالباسورد الجديد فوراً.',
-                  style: T.s(8, T.w700, C.rose400)),
+              child: Text('سيصل المستخدم رابط على بريده لتعيين كلمة مرور جديدة.',
+                  style: T.s(8, T.w700, C.slate400)),
             ),
           ],
         );
