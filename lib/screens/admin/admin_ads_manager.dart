@@ -109,7 +109,10 @@ class _AdminAdsManagerState extends State<AdminAdsManager> {
           file.name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
       final compressed = await utils.compressImage('data:$mime;base64,$b64');
       if (mounted) setState(() => _imageUrl = compressed);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('pick image failed: $e');
+      if (mounted) await showAppAlert(context, 'تعذر اختيار الصورة، حاول مرة أخرى');
+    }
   }
 
   Future<void> _saveAd() async {

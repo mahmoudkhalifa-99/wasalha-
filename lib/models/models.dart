@@ -811,7 +811,6 @@ class AppUser {
   final UserRole role;
   final UserStatus status;
   final String? photoURL;
-  final String? password;
   final VehicleType? vehicleType;
   final String? plateNumber;
   final String? operatorId;
@@ -827,7 +826,6 @@ class AppUser {
     required this.role,
     required this.status,
     this.photoURL,
-    this.password,
     this.vehicleType,
     this.plateNumber,
     this.operatorId,
@@ -844,7 +842,6 @@ class AppUser {
         role: UserRole.parse(m['role'] as String?),
         status: UserStatus.parse(m['status'] as String?),
         photoURL: m['photoURL'] as String?,
-        password: m['password'] as String?,
         vehicleType: VehicleType.tryParse(m['vehicleType'] as String?),
         plateNumber: m['plateNumber'] as String?,
         operatorId: m['operatorId'] as String?,
@@ -863,7 +860,6 @@ class AppUser {
         'role': role.value,
         'status': status.value,
         'photoURL': photoURL,
-        'password': password,
         'vehicleType': vehicleType?.value,
         'plateNumber': plateNumber,
         'operatorId': operatorId,

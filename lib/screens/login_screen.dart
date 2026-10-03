@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:ui';
 
 import 'package:cloud_firestore/cloud_firestore.dart' hide Order, Blob;
@@ -19,8 +18,6 @@ import '../theme/app_text.dart';
 import '../widgets/common.dart';
 import '../widgets/form_fields.dart';
 import 'onboarding_screen.dart';
-
-enum _OtpStep { input, otp }
 
 const String _googleSvg = '''
 <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
@@ -44,7 +41,6 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _showOnboarding = true;
   bool _isRegistering = false;
   bool _isCompletingProfile = false;
-  _OtpStep _step = _OtpStep.input;
   UserRole _role = UserRole.customer; // CUSTOMER | DRIVER
   VehicleType _vehicleType = VehicleType.toktok;
 
@@ -59,15 +55,6 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _showPassword = false;
   bool _showConfirmPassword = false;
 
-  // OTP
-  final List<String> _otp = List.filled(6, '');
-  final List<TextEditingController> _otpCtrls =
-      List.generate(6, (_) => TextEditingController());
-  final List<FocusNode> _otpNodes = List.generate(6, (_) => FocusNode());
-  int _resendTimer = 60;
-  bool _canResend = false;
-  Timer? _timer;
-
   // Login
   final _loginEmail = TextEditingController();
   final _loginPassword = TextEditingController();
@@ -81,45 +68,17 @@ class _LoginScreenState extends State<LoginScreen> {
   ({String uid, String email, String displayName})? _googleUserData;
 
   @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted) return;
-      if (_step == _OtpStep.otp && _resendTimer > 0) {
-        setState(() => _resendTimer--);
-      }
-      if (_resendTimer == 0 && !_canResend) {
-        setState(() => _canResend = true);
-      }
-    });
-  }
-
-  @override
   void dispose() {
-    _timer?.cancel();
     for (final c in [
       _name, _phone, _email, _password, _confirmPassword, _village,
-      _loginEmail, _loginPassword, ..._otpCtrls
+      _loginEmail, _loginPassword
     ]) {
       c.dispose();
-    }
-    for (final n in _otpNodes) {
-      n.dispose();
     }
     super.dispose();
   }
 
   // ───────────────────────── المنطق ─────────────────────────
-
-  void _handleResendOtp() {
-    if (!_canResend) return;
-    setState(() {
-      _resendTimer = 60;
-      _canResend = false;
-    });
-    // Logic to resend OTP via WhatsApp/SMS
-    showAppAlert(context, 'تم إعادة إرسال كود التفعيل إلى رقمك');
-  }
 
   Future<void> _handleForgotPassword() async {
     const adminWhatsApp = '201065019364';
@@ -186,7 +145,7 @@ class _LoginScreenState extends State<LoginScreen> {
       role: isAdminEmail ? UserRole.admin : UserRole.customer,
       status: UserStatus.approved,
       zoneId: 'أشمون',
-      wallet: const Wallet(balance: 1000, totalEarnings: 0, withdrawn: 0),
+      wallet: const Wallet(balance: 0, totalEarnings: 0, withdrawn: 0),
     );
   }
 
@@ -289,38 +248,55 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  String _authErrorMessage(String code, {required bool registering}) {
+    switch (code) {
+      case 'email-already-in-use':
+        return 'البريد الإلكتروني مسجل بالفعل، جرّب تسجيل الدخول';
+      case 'invalid-email':
+        return 'البريد الإلكتروني غير صحيح';
+      case 'weak-password':
+        return 'كلمة المرور ضعيفة، استخدم 8 رموز على الأقل';
+      case 'network-request-failed':
+        return 'تأكد من الاتصال بالإنترنت وحاول مرة أخرى';
+      case 'too-many-requests':
+        return 'محاولات كثيرة، حاول مرة أخرى بعد قليل';
+      case 'user-disabled':
+        return 'تم إيقاف هذا الحساب، تواصل مع الإدارة';
+      case 'operation-not-allowed':
+        return 'تسجيل الدخول بالبريد غير مفعّل في Firebase';
+      case 'user-not-found':
+      case 'wrong-password':
+      case 'invalid-credential':
+        return 'البريد أو كلمة المرور غير صحيحة.';
+      default:
+        return registering
+            ? 'تعذر إنشاء الحساب، حاول مرة أخرى'
+            : 'تعذر تسجيل الدخول، حاول مرة أخرى';
+    }
+  }
+
   Future<void> _handleAuth() async {
+    if (_loading) return;
     setState(() => _errorMsg = null);
 
-    if (_isRegistering && _step == _OtpStep.input) {
+    if (_isRegistering) {
       if (!_requireFilled([
         _name.text, _phone.text, _email.text, _password.text,
         _confirmPassword.text, _center, _village.text
       ])) return;
       if (!_validateSignUp()) return;
-      setState(() => _step = _OtpStep.otp);
-      return;
-    }
-    if (!_isRegistering) {
+    } else {
       if (!_requireFilled([_loginEmail.text, _loginPassword.text])) return;
     }
 
     setState(() => _loading = true);
     try {
       if (_isRegistering) {
-        if (_otp.join().length < 6) {
-          setState(() {
-            _errorMsg = 'الكود غير مكتمل';
-            _loading = false;
-          });
-          return;
-        }
-
         final cred = await auth.createUserWithEmailAndPassword(
-            email: _email.text, password: _password.text);
+            email: _email.text.trim(), password: _password.text);
         final userData = AppUser(
           id: cred.user!.uid,
-          email: _email.text,
+          email: _email.text.trim(),
           name: _name.text,
           phone: _phone.text,
           role: _role,
@@ -335,7 +311,7 @@ class _LoginScreenState extends State<LoginScreen> {
         widget.onLogin(userData);
       } else {
         final cred = await auth.signInWithEmailAndPassword(
-            email: _loginEmail.text, password: _loginPassword.text);
+            email: _loginEmail.text.trim(), password: _loginPassword.text);
         final userSnap = await db.collection('users').doc(cred.user!.uid).get();
         if (userSnap.exists) {
           widget.onLogin(AppUser.fromMap(
@@ -350,86 +326,20 @@ class _LoginScreenState extends State<LoginScreen> {
           widget.onLogin(defaultUser);
         }
       }
+    } on fb.FirebaseAuthException catch (err) {
+      debugPrint('Auth error: ${err.code}');
+      if (mounted) {
+        setState(() => _errorMsg =
+            _authErrorMessage(err.code, registering: _isRegistering));
+      }
     } catch (err) {
-      setState(() => _errorMsg = 'البريد أو كلمة المرور غير صحيحة.');
+      debugPrint('Auth error: $err');
+      if (mounted) {
+        setState(() => _errorMsg = 'حدث خطأ غير متوقع، حاول مرة أخرى');
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  void _handleOtpChange(int index, String value) {
-    if (value.isNotEmpty && int.tryParse(value) == null) return;
-    final v = value.isEmpty ? '' : value.substring(value.length - 1);
-    setState(() => _otp[index] = v);
-    if (_otpCtrls[index].text != v) _otpCtrls[index].text = v;
-    if (value.isNotEmpty && index < 5) _otpNodes[index + 1].requestFocus();
-  }
-
-  void _handleOtpKey(int index, KeyEvent e) {
-    if (e is KeyDownEvent &&
-        e.logicalKey == LogicalKeyboardKey.backspace &&
-        _otp[index].isEmpty &&
-        index > 0) {
-      _otpNodes[index - 1].requestFocus();
-    }
-  }
-
-  // ───────────────────────── الواجهة ─────────────────────────
-
-  @override
-  Widget build(BuildContext context) {
-    if (_showOnboarding) {
-      return OnboardingScreen(
-          onComplete: () => setState(() => _showOnboarding = false));
-    }
-
-    final md = isMd(context);
-    return Scaffold(
-      backgroundColor: C.slate50,
-      resizeToAvoidBottomInset: true,
-      body: Stack(
-        children: [
-          // ── خلفية الزينة (مطابقة لشعار التطبيق) ──
-          Positioned.fill(child: _ambientBackground()),
-
-          SafeArea(
-            child: LayoutBuilder(builder: (context, box) {
-              return SingleChildScrollView(
-                padding: EdgeInsets.symmetric(
-                    horizontal: 16, vertical: md ? 48 : 32),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                      minHeight: (box.maxHeight - (md ? 96 : 64))
-                          .clamp(0.0, double.infinity)),
-                  child: IntrinsicHeight(
-                    child: Column(
-                      children: [
-                        const Spacer(),
-                        Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 512),
-                            child: _card(context, md),
-                          ),
-                        ),
-                        const Spacer(),
-                        Padding(
-                          padding: const EdgeInsets.only(top: 24),
-                          child: Text(
-                            'جميع الحقوق محفوظة © تطبيق وصلها المنوفية • خدمة ذكية على مدار 24 ساعة',
-                            textAlign: TextAlign.center,
-                            style: T.s(12, T.w700, C.slate400),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            }),
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _ambientBackground() {
@@ -854,7 +764,6 @@ class _LoginScreenState extends State<LoginScreen> {
               _errorMsg = null;
             } else {
               _isRegistering = true;
-              _step = _OtpStep.input;
               _errorMsg = null;
             }
           }),
@@ -863,7 +772,7 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         _gap(20),
         if (_isRegistering)
-          (_step == _OtpStep.input ? _registerInput(context) : _registerOtp())
+          _registerInput(context)
         else
           _loginForm(),
       ],
@@ -956,134 +865,6 @@ class _LoginScreenState extends State<LoginScreen> {
             child: _submitText('إنشاء الحساب والمتابعة'),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _registerOtp() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Column(
-          children: [
-            Text('تأكيد رقم الهاتف',
-                textAlign: TextAlign.center,
-                style: T.s(24, T.w900, C.slate900, letterSpacing: -0.6)),
-            const SizedBox(height: 8),
-            Text('أدخل الرمز المكون من 6 أرقام المرسل إلى',
-                textAlign: TextAlign.center,
-                style: T.s(12, T.w700, C.slate400, height: 1.625)),
-            Directionality(
-              textDirection: TextDirection.ltr,
-              child: Text(_phone.text,
-                  textAlign: TextAlign.center,
-                  style: T.s(12, T.w700, C.emerald600, height: 1.625)),
-            ),
-          ],
-        ),
-        _gap(16),
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Directionality(
-            textDirection: TextDirection.ltr,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                for (var idx = 0; idx < 6; idx++)
-                  Padding(
-                    padding: EdgeInsets.only(left: idx == 0 ? 0 : 8),
-                    child: _otpBox(idx),
-                  ),
-              ],
-            ),
-          ),
-        ),
-        _gap(16),
-        PrimaryButton(
-          onTap: _loading ? null : _handleAuth,
-          child: _loading
-              ? const Spinner()
-              : Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(LucideIcons.shieldCheck,
-                        size: 20, color: C.white),
-                    const SizedBox(width: 8),
-                    _submitText('تأكيد الرمز'),
-                  ],
-                ),
-        ),
-        _gap(12),
-        Center(
-          child: _canResend
-              ? GestureDetector(
-                  onTap: _handleResendOtp,
-                  child: Text('إعادة إرسال الكود',
-                      style: T.s(12, T.w900, C.emerald600)),
-                )
-              : Text.rich(
-                  TextSpan(children: [
-                    TextSpan(
-                        text: 'إعادة الإرسال خلال ',
-                        style: T.s(12, T.w700, C.slate400)),
-                    TextSpan(
-                        text: '$_resendTimer',
-                        style: T.s(12, T.w900, C.emerald600)),
-                    TextSpan(
-                        text: ' ثانية', style: T.s(12, T.w700, C.slate400)),
-                  ]),
-                ),
-        ),
-        _gap(16),
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => setState(() => _step = _OtpStep.input),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text('تعديل رقم الهاتف',
-                textAlign: TextAlign.center,
-                style: T.s(12, T.w900, C.slate400)),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _otpBox(int idx) {
-    final has = _otp[idx].isNotEmpty;
-    return Focus(
-      canRequestFocus: false,
-      skipTraversal: true,
-      onKeyEvent: (node, e) {
-        _handleOtpKey(idx, e);
-        return KeyEventResult.ignored;
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        width: 40,
-        height: 56,
-        decoration: BoxDecoration(
-          color: has ? C.white : C.slate50,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-              color: has ? C.emerald600 : C.slate200, width: 2),
-        ),
-        child: TextField(
-          controller: _otpCtrls[idx],
-          focusNode: _otpNodes[idx],
-          textAlign: TextAlign.center,
-          keyboardType: TextInputType.number,
-          inputFormatters: otpInputFormatters,
-          cursorColor: C.emerald600,
-          style: T.s(20, T.w900, C.slate900),
-          decoration: const InputDecoration(
-            border: InputBorder.none,
-            isCollapsed: true,
-            counterText: '',
-            contentPadding: EdgeInsets.symmetric(vertical: 14),
-          ),
-          onChanged: (v) => _handleOtpChange(idx, v),
-        ),
       ),
     );
   }

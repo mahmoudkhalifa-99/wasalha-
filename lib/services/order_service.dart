@@ -1,5 +1,6 @@
 // نسخة Dart من services/orderService.ts — نفس المنطق بالظبط.
 import 'package:cloud_firestore/cloud_firestore.dart' hide Order, Blob;
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../models/models.dart';
 import 'firebase_service.dart';
@@ -214,7 +215,10 @@ Future<void> releaseOrderFromCourier(String orderId, String courierId) async {
         await courierDocs.docs.first.reference
             .update({'currentOrdersCount': FieldValue.increment(-1)});
       }
-    } catch (_) {}
+    } catch (e) {
+      // تحديث عداد الطلبات اتسبّب بفشل جانبي، مش بنوقف إتمام الطلب بسببه
+      debugPrint('courier counter update failed: $e');
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.update, 'orders/$orderId');
   }

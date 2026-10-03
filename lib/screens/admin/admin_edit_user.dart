@@ -1,3 +1,43 @@
+        final password = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('كلمة المرور',
+                style: T.s(10, T.w800, C.slate500)),
+            const SizedBox(height: 6),
+            PressScale(
+              scale: 0.97,
+              onTap: _sendingReset ? null : _sendResetEmail,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                decoration: BoxDecoration(
+                  color: C.slate50,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: C.slate200),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(LucideIcons.mail, size: 16, color: C.indigo500),
+                    const SizedBox(width: 8),
+                    Text(
+                        _sendingReset
+                            ? 'جارٍ الإرسال...'
+                            : 'إرسال رابط إعادة تعيين كلمة المرور',
+                        style: T.s(11, T.w800, C.slate700)),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Text('سيصل المستخدم رابط على بريده لتعيين كلمة مرور جديدة.',
+                  style: T.s(8, T.w700, C.slate400)),
+            ),
+          ],
+        );
+import 'package:cloud_firestore/cloud_firestore.dart' hide Order, Blob;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -27,7 +67,7 @@ class _AdminEditUserState extends State<AdminEditUser> {
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
-  final _passwordCtrl = TextEditingController();
+  bool _sendingReset = false;
   final _balanceCtrl = TextEditingController(text: '0');
   UserRole _role = UserRole.customer;
   UserStatus _status = UserStatus.approved;
@@ -58,7 +98,6 @@ class _AdminEditUserState extends State<AdminEditUser> {
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
     _emailCtrl.dispose();
-    _passwordCtrl.dispose();
     _balanceCtrl.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -96,6 +135,31 @@ class _AdminEditUserState extends State<AdminEditUser> {
     }
   }
 
+  /// تغيير كلمة المرور الحقيقي يتم عبر رابط إعادة تعيين من Firebase Auth
+  /// (مفيش تخزين لكلمات المرور في Firestore).
+  Future<void> _sendResetEmail() async {
+    final email = _emailCtrl.text.trim();
+    if (_sendingReset) return;
+    if (!email.contains('@')) {
+      await showAppAlert(context, 'البريد الإلكتروني غير صحيح');
+      return;
+    }
+    setState(() => _sendingReset = true);
+    try {
+      await auth.sendPasswordResetEmail(email: email);
+      if (mounted) {
+        await showAppAlert(
+            context, 'تم إرسال رابط إعادة تعيين كلمة المرور إلى $email');
+      }
+    } catch (e) {
+      if (mounted) {
+        await showAppAlert(context, 'تعذر إرسال الرابط: ${friendlyError(e)}');
+      }
+    } finally {
+      if (mounted) setState(() => _sendingReset = false);
+    }
+  }
+
   Future<void> _handleUpdate() async {
     if (_isSaving) return;
     setState(() => _isSaving = true);
@@ -107,9 +171,8 @@ class _AdminEditUserState extends State<AdminEditUser> {
         'role': _role.value,
         'status': _status.value,
       };
-      if (_passwordCtrl.text.trim().isNotEmpty) {
-        updates['password'] = _passwordCtrl.text;
-      }
+      // تنظيف أي كلمة مرور قديمة مخزنة كنص في وثيقة المستخدم
+      updates['password'] = FieldValue.delete();
       if (_role == UserRole.driver) {
         updates['vehicleType'] = _vehicleType.value;
       }

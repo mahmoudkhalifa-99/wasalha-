@@ -62,7 +62,9 @@ class _WasalhaMapState extends State<WasalhaMap> {
           maxZoom: 17,
         ),
       );
-    } catch (_) {}
+    } catch (_) {
+      // الخريطة لسه مش جاهزة (fitCamera قبل أول رسم)، هنعيد المحاولة مع التحديث الجاي
+    }
   }
 
   void _recenter() {

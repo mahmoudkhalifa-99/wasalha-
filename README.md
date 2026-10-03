@@ -6,7 +6,7 @@
 ```bash
 bash setup_android.sh          # مرة واحدة: يولّد مشروع الأندرويد ويطبّق الأيقونات والصلاحيات
 flutterfire configure --project=sada-51292 --platforms=android --android-package-name=com.wasalah.app
-flutter run --dart-define=GEMINI_API_KEY=your_key   # المفتاح مطلوب فقط لتشغيل المساعد الذكي
+flutter run
 ```
 تسجيل الدخول بجوجل: لازم بصمة SHA-1 لمفتاح التوقيع تتسجل في Firebase Console (بدون Web Client ID، مطلوب فقط google-services.json).
 
@@ -32,7 +32,7 @@ flutter run --dart-define=GEMINI_API_KEY=your_key   # المفتاح مطلوب 
 | App shell (الهيدر، الخروج، الإشعارات، التوجيه) | ✅ |
 | **CustomerDashboard كاملة** (مشوار/مطاعم/صيدلية + تتبع حي + تقييم + خرائط) | ✅ |
 | RestaurantMenuView / ManualRestaurantView / AdsSlider / AdDetailsView | ✅ |
-| ChatView / WalletView / ProfileView / ActivityView / AIAssistant (Gemini) | ✅ |
+| ChatView / WalletView / ProfileView / ActivityView | ✅ |
 | **CourierDashboard كاملة** (أونلاين/أوفلاين + عروض الأسعار + تتبع GPS حي + خريطة كاملة الشاشة) | ✅ |
 | Notifications (FCM حقيقي عبر firebase_messaging) / Support Views | ✅ |
 | **كل شاشات الإدارة الـ 6** (SuperAdmin + Operator + إدارة المستخدمين/المطاعم/الإعلانات/الجغرافيا) | ✅ |
@@ -44,7 +44,7 @@ flutter run --dart-define=GEMINI_API_KEY=your_key   # المفتاح مطلوب 
 - `flutter_map` + `latlong2` بديل Leaflet
 - `file_selector` لاختيار الصور (روشتة الصيدلية، صورة البروفايل)
 - `geolocator` لتتبع موقع الكابتن الحي (بديل navigator.geolocation.watchPosition)
-- `http` لطلبات OSRM (المسار الفعلي) و Gemini API
+- `http` لطلبات OSRM (المسار الفعلي)
 
 ## الإشعارات والأذونات (تحديث)
 - أول فتح للتطبيق: شاشة شرح ثم طلب إذن الإشعارات والموقع (`lib/services/permission_service.dart`).

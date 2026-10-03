@@ -52,7 +52,9 @@ String friendlyError(Object e) {
     if (m is Map && m['error'] != null) {
       t = m['error'].toString().replaceFirst('Exception: ', '');
     }
-  } catch (_) {}
+  } catch (_) {
+    // النص مش JSON، نستخدمه زي ما هو
+  }
   if (t.contains('permission-denied')) {
     t = 'مفيش صلاحية لتنفيذ العملية (راجع قواعد Firestore)';
   }

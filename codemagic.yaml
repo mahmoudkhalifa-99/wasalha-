@@ -15,7 +15,7 @@ workflows:
     environment:
       flutter: stable
       groups:
-        - Wasalha
+        - wasalah_env
       vars:
         PACKAGE_NAME: "com.wasalah.app"
     scripts:
@@ -155,14 +155,6 @@ workflows:
       - name: توليد أيقونة التطبيق (launcher icon)
         script: |
           dart run flutter_launcher_icons
-
-      - name: حقن مفتاح Gemini (لو موجود كمتغيّر بيئة)
-        script: |
-          if [ -n "${GEMINI_API_KEY:-}" ]; then
-            sed -i "s/YOUR_GEMINI_API_KEY_HERE/${GEMINI_API_KEY}/" lib/config/ai_config.dart
-          else
-            echo "تنبيه: GEMINI_API_KEY مش موجود كمتغيّر بيئة - المساعد الذكي هيفضل معطّل"
-          fi
 
       - name: بناء APK
         script: flutter build apk --release --dart-define=PUSH_RELAY_URL=${PUSH_RELAY_URL:-}

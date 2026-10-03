@@ -25,7 +25,6 @@ import 'activity_view.dart';
 import 'profile_view.dart';
 import 'wallet_view.dart';
 import 'chat_view.dart';
-import 'ai_assistant.dart';
 
 /// نسخة Flutter من pages/CustomerDashboard.tsx — نفس المنطق والتصميم بالظبط.
 class CustomerDashboard extends StatefulWidget {
@@ -67,7 +66,6 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   double _actualRoadDist = 0;
   bool _isCalculatingDist = false;
 
-  bool _aiOpen = false;
   bool _showChat = false;
   bool _isSubmitting = false;
   String? _acceptingOfferId;
@@ -493,7 +491,6 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
           ),
         ),
         _bottomNav(),
-        if (_aiOpen) AIAssistant(isOpen: _aiOpen, onClose: () => setState(() => _aiOpen = false)),
         if (_viewingAd != null)
           AdDetailsView(ad: _viewingAd!, onClose: () => setState(() => _viewingAd = null)),
         if (_showManualRest)
@@ -548,38 +545,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          PressScale(
-            scale: 0.95,
-            onTap: () => setState(() => _aiOpen = true),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [
-                  C.emerald50.withOpacity(0.9),
-                  const Color(0xFFF0FDFA), // teal-50
-                ]),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: C.emerald200.withOpacity(0.6)),
-                boxShadow: Sh.sm(),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: C.emerald600,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(LucideIcons.bot, size: 16, color: C.white),
-                  ),
-                  const SizedBox(width: 8),
-                  Text('المساعد الذكي',
-                      style: T.s(12, T.w700, C.emerald800)),
-                ],
-              ),
-            ),
-          ),
+          const SizedBox.shrink(),
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
