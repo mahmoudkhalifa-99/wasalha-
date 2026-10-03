@@ -12,8 +12,15 @@ class GoogleSignInCancelledException implements Exception {
   String toString() => 'GoogleSignInCancelledException';
 }
 
-final GoogleSignIn _googleSignIn =
-    GoogleSignIn(scopes: const ['email', 'profile']);
+// Web client ID (client_type 3) من google-services.json — بيضمن إن idToken
+// يرجع حتى لو الـ plugin ما ولّدش default_web_client_id.
+const String _webClientId =
+    '821734316791-v4n5r7slachnbfj51nnnbborae0r81jn.apps.googleusercontent.com';
+
+final GoogleSignIn _googleSignIn = GoogleSignIn(
+  scopes: const ['email', 'profile'],
+  serverClientId: _webClientId,
+);
 
 /// تسجيل الدخول بجوجل على الأندرويد بالطريقة الأصلية (Native).
 ///
