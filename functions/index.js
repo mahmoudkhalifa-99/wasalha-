@@ -38,12 +38,17 @@ exports.pushOnNotification = onDocumentCreated(
       orderId: String(n.orderId || ''),
     };
 
-    // رسالة data فقط + أولوية عالية: التطبيق نفسه بيعرض الإشعار (حتى وهو مقفول)
+    // notification + data + أولوية عالية: أندرويد بيعرض الإشعار لوحده حتى والتطبيق مقفول،
+    // والـ tag = key عشان نفس الإشعار ما يتكررش لو وصل من أكتر من مسار.
     for (let i = 0; i < tokens.length; i += 500) {
       const res = await admin.messaging().sendEachForMulticast({
         tokens: tokens.slice(i, i + 500),
+        notification: { title: data.title, body: data.body },
         data,
-        android: { priority: 'high' },
+        android: {
+          priority: 'high',
+          notification: { channelId: 'wasalha_high_importance', tag: data.key, sound: 'default' },
+        },
       });
       res.responses.forEach((r, idx) => {
         if (!r.success) console.warn('FCM failed', tokens[i + idx], r.error && r.error.code);

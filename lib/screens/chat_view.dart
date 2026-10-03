@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../models/models.dart';
+import '../services/notification_service.dart';
 import '../services/firebase_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_shadows.dart';
@@ -99,14 +100,14 @@ class _ChatViewState extends State<ChatView> {
           ? widget.order.driverId
           : widget.order.customerId;
       if (recipientId != null) {
-        await db.collection('notifications').add({
-          'userId': recipientId,
-          'title': 'رسالة من ${widget.user.name}',
-          'body': text,
-          'type': 'INFO',
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-          'read': false,
-        });
+        await NotificationService.notifyUser(
+          userId: recipientId,
+          title: 'رسالة من ${widget.user.name}',
+          body: text,
+          type: 'INFO',
+          key: 'chat_${widget.order.id}_${DateTime.now().millisecondsSinceEpoch}',
+          orderId: widget.order.id,
+        );
       }
     } catch (err) {
       debugPrint('send message error: $err');

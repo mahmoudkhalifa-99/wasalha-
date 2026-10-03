@@ -222,12 +222,18 @@ class _LoginScreenState extends State<LoginScreen> {
       debugPrint('Google sign-in error: $error');
       // المستخدم لغى نافذة تسجيل الدخول بنفسه، مفيش داعي نظهر رسالة خطأ
       if (!isGoogleSignInCancelled(error)) {
-        final code = error is fb.FirebaseAuthException ? error.code : error.runtimeType.toString();
+        final code = googleSignInErrorCode(error);
         final hint = switch (code) {
           'invalid-cert-hash' || 'app-not-authorized' =>
             'بصمة SHA-1 للتطبيق مش مسجلة في Firebase',
+          'sign_in_failed' =>
+            'إعدادات جوجل غير مكتملة (SHA-1 أو google-services.json)',
+          'missing-id-token' =>
+            'google-services.json قديم، نزّله تاني من Firebase بعد إضافة SHA-1',
           'operation-not-allowed' => 'تسجيل الدخول بجوجل مش مفعّل في Firebase',
-          'network-request-failed' => 'تأكد من الاتصال بالإنترنت',
+          'network-request-failed' ||
+          'network_error' =>
+            'تأكد من الاتصال بالإنترنت',
           _ => 'يرجى المحاولة مرة أخرى',
         };
         setState(() => _errorMsg = 'فشل تسجيل الدخول عبر جوجل: $hint ($code)');

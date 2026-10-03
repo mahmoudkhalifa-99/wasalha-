@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
 import '../../services/firebase_service.dart';
+import '../../services/notification_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text.dart';
 
@@ -142,6 +145,13 @@ class _BroadcastDialogState extends State<_BroadcastDialog> {
       if (failed == ids.length) {
         throw Exception('فشل الإرسال بالكامل، راجع قواعد Firestore');
       }
+      // Push حقيقي (والتطبيق مقفول) مرة واحدة للفئة كلها عن طريق الـ relay
+      unawaited(NotificationService.broadcastPush(
+        roles: _audience.roles,
+        title: title,
+        body: body,
+        key: key,
+      ));
       if (mounted) {
         setState(() => _done = failed == 0
             ? 'تم إرسال الرسالة إلى ${ids.length} مستخدم ✅'

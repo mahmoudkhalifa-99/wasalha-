@@ -74,3 +74,12 @@ flutter run
 
 ## المستثنون من تأكيد البريد ورقم الهاتف
 `verificationExemptEmails` في `lib/constants.dart` (admin@ashmoun.com, mahmoudkhalifa.kh91@gmail.com, superadmin@ashmoun.com). لو غيّرت القائمة، غيّر دالة `exemptEmails()` في `firestore.rules` كمان.
+
+## تسجيل الدخول بجوجل (Native)
+بيستخدم `google_sign_in` (قايمة حسابات جوجل جوه التطبيق من غير متصفح). لازم: `google-services.json` محدّث من Firebase بعد إضافة SHA-1 و SHA-256 للتوقيع، وتفعيل Google في Authentication.
+
+## الإشعارات والتطبيق مقفول
+- الـ relay (`apps_script/Code.gs`) والـ Cloud Function بيبعتوا FCM بـ notification + data، فأندرويد بيعرضه لوحده.
+- بعد أي تعديل في `Code.gs`: Deploy ← Manage deployments ← Edit ← New version.
+- الرسائل الجماعية: التطبيق بيكتب إشعار لكل مستخدم + طلب واحد للـ relay (`broadcast: true`) والـ relay بيتأكد إن المرسل ADMIN/OPERATOR.
+- لو المستخدم عمل Force stop للتطبيق أو الموبايل بيقتل التطبيقات (بعض أجهزة شاومي/سامسونج): فعّل "Autostart" وشيل التطبيق من توفير البطارية.

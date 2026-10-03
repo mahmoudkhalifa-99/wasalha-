@@ -1,22 +1,55 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/services.dart' show PlatformException;
+import 'package:google_sign_in/google_sign_in.dart';
 
 import 'firebase_service.dart';
 
-/// تسجيل الدخول بجوجل على الأندرويد.
+/// المستخدم قفل نافذة اختيار الحساب بنفسه.
+class GoogleSignInCancelledException implements Exception {
+  const GoogleSignInCancelledException();
+  @override
+  String toString() => 'GoogleSignInCancelledException';
+}
+
+final GoogleSignIn _googleSignIn =
+    GoogleSignIn(scopes: const ['email', 'profile']);
+
+/// تسجيل الدخول بجوجل على الأندرويد بالطريقة الأصلية (Native).
 ///
-/// بيستخدم `signInWithProvider` بتاع firebase_auth — وده بيفتح شاشة جوجل
-/// الرسمية عن طريق Chrome Custom Tab (مش WebView مدمج)، وده المسموح من جوجل،
-/// فمفيش المشكلة القديمة اللي كانت بتطلّع "فشل تسجيل الدخول".
-/// المطلوب بس: google-services.json + تسجيل بصمة SHA-1 في Firebase Console.
-Future<UserCredential> signInWithGoogle() {
-  final provider = GoogleAuthProvider()
-    ..addScope('email')
-    ..addScope('profile');
-  return auth.signInWithProvider(provider);
+/// بتظهر قايمة حسابات جوجل جوه التطبيق مباشرة من غير ما يفتح المتصفح، فمفيش
+/// صفحة firebaseapp.com ولا خطأ "missing initial state" ولا اختيار حساب مرتين.
+/// المطلوب: google-services.json محدّث + بصمة SHA-1 مسجلة في Firebase.
+Future<UserCredential> signInWithGoogle() async {
+  // نخرّج الحساب السابق عشان قايمة الحسابات تظهر كل مرة
+  try {
+    await _googleSignIn.signOut();
+  } catch (e) {
+    debugPrint('google signOut before signIn failed: $e');
+  }
+  final account = await _googleSignIn.signIn();
+  if (account == null) throw const GoogleSignInCancelledException();
+
+  final g = await account.authentication;
+  if (g.idToken == null) {
+    throw FirebaseAuthException(
+      code: 'missing-id-token',
+      message: 'google-services.json مفيهوش Web client (حدّثه من Firebase)',
+    );
+  }
+  final credential = GoogleAuthProvider.credential(
+    idToken: g.idToken,
+    accessToken: g.accessToken,
+  );
+  return auth.signInWithCredential(credential);
 }
 
 /// هل الخطأ ده معناه إن المستخدم لغى شاشة جوجل بنفسه؟
 bool isGoogleSignInCancelled(Object error) {
+  if (error is GoogleSignInCancelledException) return true;
+  if (error is PlatformException) {
+    return error.code == 'sign_in_canceled' || error.code == 'canceled';
+  }
   if (error is FirebaseAuthException) {
     return error.code == 'web-context-canceled' ||
         error.code == 'canceled' ||
@@ -24,4 +57,11 @@ bool isGoogleSignInCancelled(Object error) {
         error.code == 'cancelled-popup-request';
   }
   return false;
+}
+
+/// كود مختصر للخطأ (للرسالة اللي بتظهر للمستخدم).
+String googleSignInErrorCode(Object error) {
+  if (error is FirebaseAuthException) return error.code;
+  if (error is PlatformException) return error.code;
+  return error.runtimeType.toString();
 }

@@ -64,8 +64,6 @@ class NotificationService {
     return granted ?? true;
   }
 
-  static int _idFor(String key) => key.hashCode & 0x7fffffff;
-
   static Future<void> show({
     required String key,
     required String title,
@@ -73,11 +71,13 @@ class NotificationService {
   }) async {
     try {
       await init();
+      // id = 0 + tag = key: نفس طريقة أندرويد في عرض إشعارات FCM الجاهزة،
+      // فلو وصل نفس الإشعار من FCM ومن Firestore بيستبدلوا بعض (من غير تكرار).
       await _plugin.show(
-        _idFor(key),
+        0,
         title,
         body,
-        const NotificationDetails(
+        NotificationDetails(
           android: AndroidNotificationDetails(
             _channelId,
             _channelName,
@@ -87,6 +87,7 @@ class NotificationService {
             playSound: true,
             enableVibration: true,
             onlyAlertOnce: true,
+            tag: key,
             icon: '@mipmap/ic_launcher',
           ),
         ),
@@ -184,6 +185,37 @@ class NotificationService {
       key: key,
       orderId: orderId,
     ));
+  }
+
+  /// Push جماعي (للمدير/المشغّل): الـ relay بيتأكد إن اللي بيبعت إدارة،
+  /// وبيبعت لكل مستخدمي الأدوار المطلوبة (كل الكباتن مش الأونلاين بس).
+  static Future<void> broadcastPush({
+    required List<String> roles,
+    required String title,
+    required String body,
+    required String key,
+  }) async {
+    if (pushRelayUrl.isEmpty) return;
+    try {
+      final idToken = await auth.currentUser?.getIdToken();
+      if (idToken == null) return;
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+      final req = await client.postUrl(Uri.parse(pushRelayUrl));
+      req.headers.contentType = ContentType.json;
+      req.write(jsonEncode({
+        'idToken': idToken,
+        'broadcast': true,
+        'roles': roles,
+        'title': title,
+        'body': body,
+        'key': key,
+      }));
+      final res = await req.close().timeout(const Duration(seconds: 90));
+      await res.drain();
+      client.close();
+    } catch (e) {
+      debugPrint('broadcast push failed: $e');
+    }
   }
 
   static Future<void> _relay({
