@@ -393,9 +393,6 @@ class _CourierDashboardState extends State<CourierDashboard> {
 
   @override
   Widget build(BuildContext context) {
-    if (user.status != UserStatus.approved) {
-      return _pendingApprovalScreen();
-    }
     if (_showChat && _activeOrder != null) {
       return ChatView(
         user: user,
@@ -448,45 +445,6 @@ class _CourierDashboardState extends State<CourierDashboard> {
         if (_activeView == _CourierView.map) _mapView(context),
         _bottomNav(),
       ],
-    );
-  }
-
-  Widget _pendingApprovalScreen() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(48),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(LucideIcons.shieldAlert, size: 80, color: C.emerald600),
-            const SizedBox(height: 24),
-            Text('حسابك بانتظار التفعيل',
-                textAlign: TextAlign.center,
-                style: T.s(30, T.w900, C.slate900, letterSpacing: -0.6)),
-            const SizedBox(height: 12),
-            Text('يرجى التواصل مع الإدارة للبدء في استقبال الطلبات.',
-                textAlign: TextAlign.center,
-                style: T.s(13, T.w700, C.slate400)),
-            const SizedBox(height: 24),
-            PressScale(
-              onTap: () => launchUrl(Uri.parse('https://wa.me/201065019364'),
-                  mode: LaunchMode.externalApplication),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 24),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF25D366),
-                  borderRadius: BorderRadius.circular(32),
-                  boxShadow: Sh.xl(),
-                ),
-                child: Text('تواصل عبر واتساب',
-                    style: T.s(15, T.w900, C.white)),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 

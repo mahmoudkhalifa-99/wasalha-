@@ -145,6 +145,7 @@ class _NotificationsViewState extends State<NotificationsView> {
   IconData _typeIcon(String type) {
     if (type == 'SUCCESS') return LucideIcons.checkCircle;
     if (type == 'ALERT') return LucideIcons.bell;
+    if (type == 'ADMIN_MESSAGE') return LucideIcons.megaphone;
     return LucideIcons.info;
   }
 

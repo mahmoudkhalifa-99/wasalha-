@@ -11,6 +11,7 @@ import '../../theme/app_shadows.dart';
 import '../../theme/app_text.dart';
 import '../../widgets/common.dart';
 import 'admin_ads_manager.dart';
+import 'broadcast_dialog.dart';
 import 'admin_geography_manager.dart';
 import 'admin_restaurant_manager.dart';
 import 'admin_users_list.dart';
@@ -486,6 +487,52 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                 ),
               ),
             ),
+          SizedBox(
+            width: cols == 2 ? (box.maxWidth - 16) / 2 : box.maxWidth,
+            child: PressScale(
+              scale: 0.98,
+              onTap: () => showBroadcastDialog(context, sender: widget.user),
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: C.white,
+                  borderRadius: BorderRadius.circular(48),
+                  border: Border.all(color: C.slate100),
+                  boxShadow: Sh.sm(),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Icon(LucideIcons.chevronLeft,
+                        size: 20, color: C.slate200),
+                    Row(
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text('رسالة للمستخدمين',
+                                style: T.s(20, T.w900, C.slate900)),
+                            Text('إرسال لكل المستخدمين أو العملاء أو الكباتن',
+                                style: T.s(10, T.w700, C.slate400)),
+                          ],
+                        ),
+                        const SizedBox(width: 16),
+                        Container(
+                          padding: const EdgeInsets.all(18),
+                          decoration: BoxDecoration(
+                            color: C.indigo50,
+                            borderRadius: BorderRadius.circular(28),
+                          ),
+                          child: const Icon(LucideIcons.send,
+                              size: 28, color: C.indigo500),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ],
       );
     });

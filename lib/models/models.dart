@@ -52,12 +52,12 @@ enum UserRole {
 }
 
 enum UserStatus {
-  pendingApproval('PENDING_APPROVAL'),
   approved('APPROVED'),
   suspended('SUSPENDED');
 
   final String value;
   const UserStatus(this.value);
+  // أي قيمة قديمة (زي PENDING_APPROVAL) بتتعامل كحساب مفعّل: مفيش تفعيل من الأدمن.
   static UserStatus parse(String? s) => values
       .firstWhere((e) => e.value == s, orElse: () => UserStatus.approved);
 }

@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../constants.dart';
 import '../models/models.dart';
@@ -18,6 +17,7 @@ import '../theme/app_text.dart';
 import '../widgets/common.dart';
 import '../widgets/form_fields.dart';
 import 'onboarding_screen.dart';
+import 'verify_email_screen.dart' show needsEmailVerification;
 
 const String _googleSvg = '''
 <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
@@ -80,13 +80,40 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // ───────────────────────── المنطق ─────────────────────────
 
+  /// نسيت كلمة المرور: بنبعت رابط إعادة تعيين على بريد المستخدم من Firebase Auth.
   Future<void> _handleForgotPassword() async {
-    const adminWhatsApp = '201065019364';
-    const message =
-        'أهلاً إدارة وصلها، نسيت كلمة المرور الخاصة بحسابي وأحتاج للمساعدة في استعادتها.';
-    final url = Uri.parse(
-        'https://wa.me/$adminWhatsApp?text=${Uri.encodeComponent(message)}');
-    await launchUrl(url, mode: LaunchMode.externalApplication);
+    final email = _loginEmail.text.trim();
+    if (!email.contains('@') || !email.contains('.')) {
+      setState(() => _errorMsg =
+          'اكتب بريدك الإلكتروني في الخانة فوق، وبعدين اضغط "نسيت كلمة المرور"');
+      return;
+    }
+    setState(() {
+      _errorMsg = null;
+      _loading = true;
+    });
+    try {
+      await auth.sendPasswordResetEmail(email: email);
+      if (mounted) {
+        await showAppAlert(context,
+            'لو البريد ده مسجل عندنا هيوصله رابط لتغيير كلمة المرور. راجع الـ Inbox والـ Spam.');
+      }
+    } on fb.FirebaseAuthException catch (e) {
+      debugPrint('reset password error: ${e.code}');
+      if (mounted) {
+        setState(() => _errorMsg = switch (e.code) {
+              'invalid-email' => 'البريد الإلكتروني غير صحيح',
+              'network-request-failed' => 'تأكد من الاتصال بالإنترنت وحاول مرة أخرى',
+              'too-many-requests' => 'محاولات كتير، حاول مرة أخرى بعد قليل',
+              _ => 'تعذر إرسال الرابط، حاول مرة أخرى',
+            });
+      }
+    } catch (e) {
+      debugPrint('reset password error: $e');
+      if (mounted) setState(() => _errorMsg = 'تعذر إرسال الرابط، حاول مرة أخرى');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   bool _validateSignUp() {
@@ -94,7 +121,7 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() => _errorMsg = 'برجاء إدخال الاسم رباعي لضمان التوثيق');
       return false;
     }
-    if (!RegExp(r'^(010|011|012|015)[0-9]{8}$').hasMatch(_phone.text)) {
+    if (!isValidPhone(_phone.text)) {
       setState(() => _errorMsg = 'رقم الهاتف غير صحيح (010, 011, 012, 015)');
       return false;
     }
@@ -141,7 +168,7 @@ class _LoginScreenState extends State<LoginScreen> {
       id: u.uid,
       email: u.email ?? '',
       name: isAdminEmail ? 'مدير المنظومة' : (u.displayName ?? 'مستخدم'),
-      phone: '01000000000',
+      phone: '', // الرقم الحقيقي إجباري: بتطلبه شاشة إكمال الرقم
       role: isAdminEmail ? UserRole.admin : UserRole.customer,
       status: UserStatus.approved,
       zoneId: 'أشمون',
@@ -214,8 +241,8 @@ class _LoginScreenState extends State<LoginScreen> {
     final g = _googleUserData;
     if (g == null) return;
     if (!_requireFilled([_phone.text, _center, _village.text])) return;
-    if (_phone.text.isEmpty || _phone.text.length < 11) {
-      setState(() => _errorMsg = 'يرجى إدخال رقم هاتف صحيح');
+    if (!isValidPhone(_phone.text)) {
+      setState(() => _errorMsg = 'رقم الهاتف غير صحيح (010, 011, 012, 015)');
       return;
     }
     if (_center.isEmpty || _village.text.isEmpty) {
@@ -231,9 +258,7 @@ class _LoginScreenState extends State<LoginScreen> {
         name: _name.text,
         phone: _phone.text,
         role: _role,
-        status: _role == UserRole.driver
-            ? UserStatus.pendingApproval
-            : UserStatus.approved,
+        status: UserStatus.approved,
         vehicleType: _role == UserRole.driver ? _vehicleType : null,
         zoneId: _center,
         wallet: const Wallet(balance: 0, totalEarnings: 0, withdrawn: 0),
@@ -275,6 +300,17 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  /// بيبعت رابط تأكيد البريد لو الحساب لسه غير مؤكد. فشل الإرسال مش بيوقف
+  /// الدخول: شاشة التأكيد فيها زر إعادة إرسال.
+  Future<void> _sendVerificationMail(fb.User u) async {
+    if (!needsEmailVerification(u, adminEmails)) return;
+    try {
+      await u.sendEmailVerification();
+    } catch (e) {
+      debugPrint('send verification mail failed: $e');
+    }
+  }
+
   Future<void> _handleAuth() async {
     if (_loading) return;
     setState(() => _errorMsg = null);
@@ -300,18 +336,18 @@ class _LoginScreenState extends State<LoginScreen> {
           name: _name.text,
           phone: _phone.text,
           role: _role,
-          status: _role == UserRole.driver
-              ? UserStatus.pendingApproval
-              : UserStatus.approved,
+          status: UserStatus.approved,
           vehicleType: _role == UserRole.driver ? _vehicleType : null,
           zoneId: _center,
           wallet: const Wallet(balance: 0, totalEarnings: 0, withdrawn: 0),
         );
         await db.collection('users').doc(cred.user!.uid).set(userData.toMap());
+        await _sendVerificationMail(cred.user!);
         widget.onLogin(userData);
       } else {
         final cred = await auth.signInWithEmailAndPassword(
             email: _loginEmail.text.trim(), password: _loginPassword.text);
+        await _sendVerificationMail(cred.user!);
         final userSnap = await db.collection('users').doc(cred.user!.uid).get();
         if (userSnap.exists) {
           widget.onLogin(AppUser.fromMap(

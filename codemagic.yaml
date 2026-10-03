@@ -15,7 +15,7 @@ workflows:
     environment:
       flutter: stable
       groups:
-        - Wasalha
+        - wasalah_env
       vars:
         PACKAGE_NAME: "com.wasalah.app"
     scripts:

@@ -1,153 +1,219 @@
 rules_version = '2';
+
+// قواعد Firestore لتطبيق وصلها.
+// انشرها من: firebase deploy --only firestore:rules
+// (أو الصقها في Firebase Console ← Firestore Database ← Rules ← Publish)
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 0. شبكة أمان عامة: أي مجموعة غير معرّفة تحت ممنوعة تمامًا افتراضيًا
-    match /{document=**} {
-      allow read, write: if false;
+
+    // ───────────── دوال مساعدة ─────────────
+    function signedIn() {
+      return request.auth != null;
     }
 
-    // --- دوال مساعدة ---
-    function isSignedIn() { return request.auth != null; }
+    function adminEmails() {
+      // لازم تطابق adminEmails في lib/constants.dart
+      return [
+        'admin@ashmoun.com',
+        'mahmoudkhalifa.kh91@gmail.com',
+        'sadat.planning.officer@dakahlia.net',
+        'admin@wasalah.com',
+        'wasalah.app@gmail.com'
+      ];
+    }
 
-    function getUserData() {
+    function me() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
-    function hasRole(role) {
-      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == role;
+    function myRole() {
+      return me().role;
     }
 
-    // إيميلات المديرين الافتراضية (لازم تطابق _adminEmails في firebase_service.dart)
-    function isBootstrappedAdmin() {
-      return isSignedIn() && (
-        request.auth.token.email in [
-          'admin@ashmoun.com',
-          'mahmoudkhalifa.kh91@gmail.com',
-          'sadat.planning.officer@dakahlia.net',
-          'admin@wasalah.com',
-          'wasalah.app@gmail.com'
-        ]
-      );
-    }
-
+    // ADMIN = السوبر أدمن | OPERATOR = المشغّل
     function isAdmin() {
-      return isBootstrappedAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
-        getUserData().role in ['ADMIN', 'SUPER_ADMIN']
-      ));
-    }
-
-    function isOperator() {
-      return isBootstrappedAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
-        getUserData().role in ['OPERATOR', 'ADMIN', 'SUPER_ADMIN']
-      ));
+      return signedIn() && myRole() == 'ADMIN';
     }
 
     function isStaff() {
-      return isAdmin() || isOperator();
+      return signedIn() && myRole() in ['ADMIN', 'OPERATOR'];
     }
 
-    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
-    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
-    function incoming() { return request.resource.data; }
-    function existing() { return resource.data; }
-
-    // --- المسارات ---
-
-    match /users/{userId} {
-      allow get: if isValidId(userId) && isSignedIn();
-      allow list: if isSignedIn() && (resource.data.id == request.auth.uid || isStaff() || resource.data.role == 'DRIVER');
-      allow create: if isValidId(userId) && (
-        isStaff() ||
-        (isOwner(userId) && (
-          (incoming().role in ['ADMIN', 'OPERATOR'] && isBootstrappedAdmin()) ||
-          incoming().role == 'CUSTOMER' ||
-          incoming().role == 'DRIVER'
-        ))
-      );
-      allow update: if isValidId(userId) && (
-        isStaff() ||
-        (isOwner(userId) && incoming().diff(existing()).affectedKeys()
-          .hasOnly(['name', 'phone', 'photoURL', 'location', 'wallet', 'plateNumber',
-                    'vehicleType', 'status', 'rating', 'completedTrips', 'zoneId', 'fcmTokens']))
-      );
-      allow delete: if isValidId(userId) && isStaff();
+    // الحساب المعطّل ما يقدرش يكتب أي حاجة
+    function notSuspended() {
+      return me().get('status', 'APPROVED') != 'SUSPENDED';
     }
 
+    // البريد لازم يكون متأكد (حسابات جوجل متأكدة تلقائياً، وإيميلات الأدمن مستثناة)
+    function emailOk() {
+      return request.auth.token.email_verified == true
+          || request.auth.token.firebase.sign_in_provider != 'password'
+          || request.auth.token.email.lower() in adminEmails();
+    }
+
+    function canWrite() {
+      return signedIn() && emailOk() && notSuspended();
+    }
+
+    // ───────────── المستخدمون ─────────────
+    function validNewUser(uid) {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['id', 'email', 'phone', 'name', 'role', 'status',
+                               'photoURL', 'vehicleType', 'plateNumber',
+                               'operatorId', 'zoneId', 'wallet', 'location'])
+          && d.get('id', uid) == uid
+          && d.email.lower() == request.auth.token.email.lower()
+          // الرتبة: عميل أو كابتن بس. الأدمن بيتعمل بإيميل أدمن متأكد فقط.
+          && (d.role in ['CUSTOMER', 'DRIVER']
+              || (d.role == 'ADMIN'
+                  && request.auth.token.email_verified == true
+                  && request.auth.token.email.lower() in adminEmails()))
+          && d.get('status', 'APPROVED') == 'APPROVED'
+          // المحفظة تبدأ بصفر، ولا أحد يحط رصيد لنفسه
+          && d.wallet.balance == 0
+          && d.wallet.totalEarnings == 0
+          && d.wallet.withdrawn == 0;
+    }
+
+    // المستخدم يعدّل بياناته الشخصية بس (مش الرتبة ولا الحالة ولا المحفظة)
+    function selfUpdateOk() {
+      return notSuspended()
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['name', 'phone', 'photoURL', 'location', 'isOnline',
+                         'fcmToken', 'notificationsEnabled', 'lastTokenUpdate']);
+    }
+
+    // قيود تعديل المدير على الحسابات
+    function adminUpdateOk(uid) {
+      let before = resource.data.get('status', 'APPROVED');
+      let after = request.resource.data.get('status', 'APPROVED');
+      return
+        // الحساب المعطّل مينفعش يتفعّل من التطبيق: الرجوع للمطوّر (من الكونسول)
+        (before != 'SUSPENDED' || after == 'SUSPENDED')
+        // التعطيل لحسابات غير الأدمن، وماينفعش المدير يعطّل نفسه
+        && (after != 'SUSPENDED'
+            || before == 'SUSPENDED'
+            || (resource.data.role != 'ADMIN' && uid != request.auth.uid));
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.auth.uid == uid && validNewUser(uid);
+      allow update: if signedIn() && emailOk() && (
+          (request.auth.uid == uid && selfUpdateOk())
+          || (isAdmin() && adminUpdateOk(uid)));
+      // حذف الحساب غير المؤكد (شاشة "البريد غلط؟") أو حذف المدير
+      allow delete: if signedIn() && (
+          (request.auth.uid == uid && request.auth.token.email_verified != true)
+          || isAdmin());
+    }
+
+    // ───────────── الطلبات ─────────────
     match /orders/{orderId} {
-      allow get: if isValidId(orderId) && isSignedIn() && (
-        isOwner(existing().customerId) ||
-        isOwner(existing().driverId) ||
-        existing().status == 'PENDING' ||
-        isStaff()
-      );
-      allow list: if isSignedIn() && (
-        resource.data.customerId == request.auth.uid ||
-        resource.data.driverId == request.auth.uid ||
-        resource.data.status == 'PENDING' ||
-        isStaff()
-      );
-      allow create: if isValidId(orderId) && isSignedIn() && (isOwner(incoming().customerId) || isStaff());
-      allow update: if isValidId(orderId) && isSignedIn() && (
-        isStaff() ||
-        isOwner(existing().customerId) ||
-        isOwner(existing().driverId) ||
-        (isOwner(incoming().driverId) && existing().status == 'PENDING')
-      );
-      allow delete: if isValidId(orderId) && isStaff();
+      allow read: if signedIn();
+      allow create: if canWrite()
+          && (request.resource.data.customerId == request.auth.uid || isStaff())
+          && request.resource.data.status in ['DRAFT', 'PENDING'];
+      allow update: if canWrite() && (
+          isStaff()
+          || resource.data.customerId == request.auth.uid
+          || resource.data.get('driverId', '') == request.auth.uid
+          || resource.data.get('assignedTo', '') == request.auth.uid);
+      allow delete: if isAdmin();
     }
 
-    match /messages/{msgId} {
-      allow get: if isValidId(msgId) && isSignedIn();
-      allow list: if isSignedIn();
-      allow create: if isValidId(msgId) && isSignedIn();
-      allow update, delete: if isValidId(msgId) && isStaff();
+    // ───────────── عروض الأسعار ─────────────
+    match /offers/{offerId} {
+      allow read: if signedIn();
+      allow create: if canWrite()
+          && request.resource.data.driverId == request.auth.uid
+          && myRole() == 'DRIVER';
+      allow update, delete: if canWrite()
+          && (resource.data.driverId == request.auth.uid || isStaff());
     }
 
-    match /notifications/{notifId} {
-      allow get: if isValidId(notifId) && isSignedIn();
-      allow list: if isSignedIn();
-      allow create, update, delete: if isValidId(notifId) && isSignedIn();
+    // ───────────── الشات ─────────────
+    match /messages/{messageId} {
+      allow read: if signedIn();
+      allow create: if canWrite() && request.resource.data.senderId == request.auth.uid;
+      allow update, delete: if isAdmin();
     }
 
-    match /restaurants/{restId} {
-      allow get, list: if true;
-      allow write: if isValidId(restId) && isStaff();
+    // ───────────── الإشعارات والرسائل الجماعية ─────────────
+    function notifForMe() {
+      return resource.data.userId in [request.auth.uid, 'ALL', myRole()];
     }
 
-    match /ads/{adId} {
-      allow get, list: if true;
-      allow update: if isValidId(adId); // للسماح بزيادة عدّادات المشاهدات/النقرات من أي مستخدم
-      allow create, delete: if isValidId(adId) && isStaff();
+    function validNotif() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['userId', 'title', 'body', 'type', 'key', 'orderId',
+                               'createdAt', 'read', 'senderId', 'senderName'])
+          && d.userId is string && d.title is string && d.body is string
+          && d.title.size() <= 120 && d.body.size() <= 1000
+          // البث للكل والرسائل الإدارية: للمدير والمشغّل بس
+          && (d.userId != 'ALL' || isStaff())
+          && (d.get('type', 'INFO') != 'ADMIN_MESSAGE' || isStaff());
     }
 
-    // مراكز وقرى المنوفية (بديل Flutter عن geo_config في نسخة الويب)
-    match /zones/{zoneId} {
-      allow get, list: if true;
-      allow write: if isValidId(zoneId) && isStaff();
+    match /notifications/{id} {
+      allow read: if signedIn() && notifForMe();
+      allow create: if canWrite() && validNotif();
+      // المستخدم يقدر يغيّر حالة "مقروء" بس
+      allow update: if signedIn() && notifForMe()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow delete: if isAdmin();
     }
 
-    match /feedback/{feedId} {
-      allow get, list: if isStaff();
-      allow create: if isValidId(feedId) && isSignedIn();
-      allow update, delete: if isValidId(feedId) && isStaff();
+    // ───────────── المحفظة والمدفوعات ─────────────
+    match /payment_requests/{id} {
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || isStaff());
+      allow create: if canWrite()
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.status == 'PENDING'
+          && request.resource.data.amount is number
+          && request.resource.data.amount > 0;
+      allow update, delete: if isStaff();
     }
 
-    match /transactions/{transId} {
-      allow get, list: if isSignedIn() && (isOwner(resource.data.userId) || isStaff());
-      allow write: if isValidId(transId) && isStaff();
+    match /transactions/{id} {
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || isStaff());
+      allow write: if isAdmin();
     }
 
-    match /payment_requests/{requestId} {
-      allow get, list: if isSignedIn() && (isOwner(resource.data.userId) || isStaff());
-      allow create: if isValidId(requestId) && isSignedIn();
-      allow update, delete: if isValidId(requestId) && isStaff();
+    // ───────────── الآراء والشكاوى ─────────────
+    match /feedback/{id} {
+      allow create: if canWrite() && request.resource.data.userId == request.auth.uid;
+      allow read: if isStaff();
+      allow update, delete: if isAdmin();
     }
 
-    // طلبات سحب أرباح الكباتن
-    match /withdrawals/{withdrawalId} {
-      allow get, list: if isSignedIn() && (isOwner(resource.data.driverId) || isStaff());
-      allow create: if isValidId(withdrawalId) && isSignedIn() && isOwner(incoming().driverId);
-      allow update, delete: if isValidId(withdrawalId) && isStaff();
+    // ───────────── الكباتن (عدّاد الطلبات) ─────────────
+    match /couriers/{id} {
+      allow read: if signedIn();
+      allow create, delete: if isStaff();
+      allow update: if canWrite() && (
+          isStaff()
+          || request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['currentOrdersCount']));
+    }
+
+    // ───────────── محتوى التطبيق (للمدير بس) ─────────────
+    match /ads/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+    match /restaurants/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+    match /geo_config/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // أي حاجة تانية: مرفوضة
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

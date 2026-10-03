@@ -29,6 +29,15 @@ class _AdminEditUserState extends State<AdminEditUser> {
   final _phoneCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   bool _sendingReset = false;
+
+  bool get _originallySuspended =>
+      _targetUser?.status == UserStatus.suspended;
+
+  /// التعطيل: للمدير بس، ومش للمديرين التانيين ولا لحسابه هو.
+  bool get _canSuspend =>
+      _targetUser != null &&
+      _targetUser!.role != UserRole.admin &&
+      widget.userId != auth.currentUser?.uid;
   final _balanceCtrl = TextEditingController(text: '0');
   UserRole _role = UserRole.customer;
   UserStatus _status = UserStatus.approved;
@@ -130,8 +139,9 @@ class _AdminEditUserState extends State<AdminEditUser> {
         'phone': _phoneCtrl.text,
         'email': _emailCtrl.text,
         'role': _role.value,
-        'status': _status.value,
       };
+      // الحساب المعطّل مينفعش يتفعّل من التطبيق، بس المطوّر يرجّعه
+      if (!_originallySuspended) updates['status'] = _status.value;
       // تنظيف أي كلمة مرور قديمة مخزنة كنص في وثيقة المستخدم
       updates['password'] = FieldValue.delete();
       if (_role == UserRole.driver) {
@@ -610,16 +620,30 @@ class _AdminEditUserState extends State<AdminEditUser> {
           },
           onChanged: (v) => setState(() => _role = v),
         );
-        final statusField = _dropdownField<UserStatus>(
-          label: 'حالة الحساب (Activation)',
-          value: _status,
-          items: const {
-            UserStatus.approved: 'مفعل (نشط الآن)',
-            UserStatus.pendingApproval: 'معلق (بانتظار مراجعة)',
-            UserStatus.suspended: 'محظور (موقوف مؤقتاً)',
-          },
-          onChanged: (v) => setState(() => _status = v),
-        );
+        final Widget statusField = _originallySuspended
+            ? _lockedStatusField()
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _dropdownField<UserStatus>(
+                    label: 'حالة الحساب (Activation)',
+                    value: _status,
+                    items: {
+                      UserStatus.approved: 'مفعل (نشط الآن)',
+                      if (_canSuspend)
+                        UserStatus.suspended: 'معطّل (لا رجوع إلا للمطوّر)',
+                    },
+                    onChanged: (v) => setState(() => _status = v),
+                  ),
+                  if (_status == UserStatus.suspended)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6, left: 4, right: 4),
+                      child: Text(
+                          'تنبيه: لو عطّلت الحساب، المستخدم مش هيقدر يدخل التطبيق، ومحدش يقدر يرجّعه غير المطوّر.',
+                          style: T.s(9, T.w800, C.rose500)),
+                    ),
+                ],
+              );
         return twoCol
             ? Row(children: [
                 Expanded(child: roleField),
@@ -632,6 +656,32 @@ class _AdminEditUserState extends State<AdminEditUser> {
                 statusField
               ]);
       }),
+    );
+  }
+
+  Widget _lockedStatusField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Text('حالة الحساب (Activation)',
+              textAlign: TextAlign.right,
+              style: T.s(10, T.w900, C.slate400)),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: C.rose50,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: C.rose200),
+          ),
+          child: Text('معطّل — إعادة التفعيل من المطوّر فقط',
+              textAlign: TextAlign.right,
+              style: T.s(13, T.w900, C.rose500)),
+        ),
+      ],
     );
   }
 

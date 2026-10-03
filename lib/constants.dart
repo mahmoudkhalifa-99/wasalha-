@@ -130,3 +130,16 @@ const List<String> adminEmails = [
   'admin@wasalah.com',
   'wasalah.app@gmail.com',
 ];
+
+/// رقم واتساب المطوّر: الحسابات المعطّلة بيرجع لها بس عن طريقه.
+const String developerWhatsApp = '201065019364';
+
+/// رقم افتراضي كان بيتحط تلقائياً للحسابات الجديدة: مش رقم حقيقي.
+const String placeholderPhone = '01000000000';
+
+/// رقم موبايل مصري صحيح (010 / 011 / 012 / 015) وليس الرقم الافتراضي.
+bool isValidPhone(String? phone) {
+  final p = (phone ?? '').trim();
+  if (p == placeholderPhone) return false;
+  return RegExp(r'^(010|011|012|015)[0-9]{8}$').hasMatch(p);
+}

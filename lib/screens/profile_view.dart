@@ -4,6 +4,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../constants.dart';
 import '../models/models.dart';
 import '../services/firebase_service.dart';
 import '../theme/app_colors.dart';
@@ -48,8 +49,8 @@ class _ProfileViewState extends State<ProfileView> {
   }
 
   Future<void> _handleUpdateProfile() async {
-    if (_nameCtrl.text.trim().isEmpty || _phoneCtrl.text.length < 11) {
-      showAppAlert(context, 'يرجى التأكد من الاسم ورقم الهاتف');
+    if (_nameCtrl.text.trim().isEmpty || !isValidPhone(_phoneCtrl.text)) {
+      showAppAlert(context, 'يرجى التأكد من الاسم ورقم هاتف صحيح (010, 011, 012, 015)');
       return;
     }
     setState(() => _isSaving = true);

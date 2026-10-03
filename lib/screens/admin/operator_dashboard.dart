@@ -13,6 +13,7 @@ import '../../theme/app_colors.dart';
 import '../../theme/app_shadows.dart';
 import '../../theme/app_text.dart';
 import '../../widgets/common.dart';
+import 'broadcast_dialog.dart';
 
 String _districtNameFor(String? villageName) {
   if (villageName == null) return 'المنوفية';
@@ -258,6 +259,28 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
                 const SizedBox(width: 4),
                 Expanded(child: _tabChip(_OpTab.live, LucideIcons.zap, 'النشاط', _liveOrders.length)),
               ],
+            ),
+          ),
+          PressScale(
+            scale: 0.97,
+            onTap: () => showBroadcastDialog(context, sender: widget.user),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              decoration: BoxDecoration(
+                color: C.emerald50,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: C.emerald200),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(LucideIcons.send, size: 16, color: C.emerald600),
+                  const SizedBox(width: 8),
+                  Text('رسالة للمستخدمين / الكباتن',
+                      style: T.s(12, T.w900, C.emerald700)),
+                ],
+              ),
             ),
           ),
         ],

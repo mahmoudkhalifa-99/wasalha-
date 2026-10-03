@@ -32,6 +32,9 @@ import 'customer_dashboard.dart';
 import 'login_screen.dart';
 import 'notifications_view.dart';
 import 'support_view.dart';
+import 'complete_phone_screen.dart';
+import 'suspended_screen.dart';
+import 'verify_email_screen.dart';
 
 /// نسخة Flutter من pages/App.tsx
 class AppShell extends StatefulWidget {
@@ -169,11 +172,11 @@ class _AppShellState extends State<AppShell> {
             name: isAdminEmail
                 ? 'مدير المنظومة'
                 : (currentUser.displayName ?? 'مستخدم'),
-            phone: '01000000000',
+            phone: '', // الرقم إجباري: بتطلبه شاشة إكمال الرقم
             role: isAdminEmail ? UserRole.admin : UserRole.customer,
             status: UserStatus.approved,
             zoneId: 'أشمون',
-            wallet: const Wallet(balance: 1000, totalEarnings: 0, withdrawn: 0),
+            wallet: const Wallet(balance: 0, totalEarnings: 0, withdrawn: 0),
           );
           try {
             await userRef.set(defaultUserData.toMap());
@@ -270,6 +273,24 @@ class _AppShellState extends State<AppShell> {
     if (_connectionError) return _connectionErrorScreen();
     if (_user == null) {
       return LoginScreen(onLogin: (u) => setState(() => _user = u));
+    }
+    // لازم يأكد البريد الأول (حسابات الإيميل/الباسورد فقط، الأدمن وجوجل مستثنين)
+    if (needsEmailVerification(auth.currentUser, adminEmails)) {
+      return VerifyEmailScreen(
+        onVerified: () {
+          if (mounted) setState(() {});
+        },
+        onLogout: _handleLogout,
+      );
+    }
+    // حساب معطّل: مفيش استخدام، ومحدش يرجّعه غير المطوّر
+    if (_user!.status == UserStatus.suspended) {
+      return SuspendedScreen(name: _user!.name, onLogout: _handleLogout);
+    }
+    // رقم الهاتف إجباري لكل الحسابات (جوجل وغيره)
+    if (!isValidPhone(_user!.phone)) {
+      return CompletePhoneScreen(
+          userId: _user!.id, name: _user!.name, onLogout: _handleLogout);
     }
 
     final md = isMd(context);
