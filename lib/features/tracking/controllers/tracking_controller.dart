@@ -27,6 +27,7 @@ class TrackingController {
     this.rerouteDistanceMeters = 75,
     this.offRouteMeters = 60,
     this.tick = const Duration(seconds: 10),
+    this.retryBackoffBase = const Duration(seconds: 10),
     DateTime Function()? clock,
   }) : _clock = clock ?? DateTime.now;
 
@@ -47,6 +48,10 @@ class TrackingController {
 
   /// فاصل مؤقّت المحاولات (إعادة المحاولة بعد فشل / إعادة الاشتراك).
   final Duration tick;
+
+  /// أساس الـ backoff التصاعدي بعد فشل Routing / اشتراك السائق
+  /// (×2 لكل فشل متتالي، بحد أقصى ×16؛ و429 بيزوّد مرحلة).
+  final Duration retryBackoffBase;
 
   final DateTime Function() _clock;
 
@@ -80,6 +85,11 @@ class TrackingController {
   bool _inFlight = false;
   bool _routeFailed = false;
   bool _driverNeedsResubscribe = false;
+  bool _posDead = false; // اشتراك GPS اتقفل (خطأ) ومحتاج إعادة اشتراك
+  int _routeFailures = 0;
+  DateTime? _routeRetryAt;
+  int _driverFailures = 0;
+  DateTime? _driverRetryAt;
   DateTime? _lastRequestAt;
   LatLng? _routeOrigin;
 
@@ -115,7 +125,9 @@ class TrackingController {
     if (me.value == null) {
       final cur = await location.currentLatLng();
       if (_disposed) return null;
-      if (cur != null) _applyMyFix(GeoFix(position: cur, updatedAt: _clock()));
+      if (cur != null) {
+        _applyMyFix(GeoFix(position: cur, updatedAt: _clock()), publish: false);
+      }
     }
     return me.value;
   }
@@ -141,6 +153,7 @@ class TrackingController {
       if (issue != null) {
         await _posSub?.cancel();
         _posSub = null;
+        _posDead = true; // الـ tick يعيد المحاولة لو المشكلة GPS مقفول/مؤقتة
         if (isDriverMode) status.value = TrackingStatus.locationBlocked;
         return;
       }
@@ -155,29 +168,32 @@ class TrackingController {
         onError: (Object e) {
           debugPrint('location stream error: $e');
           if (_disposed) return;
+          _posDead = true; // cancelOnError: الاشتراك اتقفل — الـ tick يعيده
           locationIssue.value =
               e is LocationIssueException ? e.issue : LocationIssue.unavailable;
           if (isDriverMode) status.value = TrackingStatus.locationBlocked;
         },
         cancelOnError: true,
       );
+      _posDead = false;
       final cur = await location.currentLatLng();
       if (_disposed) return;
       if (cur != null && me.value == null) {
-        _applyMyFix(GeoFix(position: cur, updatedAt: _clock()));
+        // أول نقطة للعرض بس: ممكن تكون last-known قديمة، فما بنبثهاش لـ Firestore.
+        _applyMyFix(GeoFix(position: cur, updatedAt: _clock()), publish: false);
       }
     } finally {
       _locationStarting = false;
     }
   }
 
-  void _applyMyFix(GeoFix f) {
+  void _applyMyFix(GeoFix f, {bool publish = true}) {
     if (_disposed) return;
     me.value = f.position;
     if (locationIssue.value != null) locationIssue.value = null;
     if (isDriverMode) {
       _onDriverFix(f);
-      publisher?.publish(f);
+      if (publish) publisher?.publish(f);
     }
   }
 
@@ -191,7 +207,9 @@ class TrackingController {
       _onDriverFix,
       onError: (Object e) {
         debugPrint('driver stream error: $e');
-        _driverNeedsResubscribe = true; // هنعيد الاشتراك في الـ tick الجاي
+        _driverFailures++;
+        _driverRetryAt = _clock().add(_backoff(_driverFailures));
+        _driverNeedsResubscribe = true; // هنعيد الاشتراك في أول tick بعد الـ backoff
       },
       cancelOnError: true,
     );
@@ -199,6 +217,8 @@ class TrackingController {
 
   void _onDriverFix(GeoFix f) {
     if (_disposed) return;
+    _driverFailures = 0;
+    _driverRetryAt = null;
     final prev = driver.value;
     double? bearing = f.bearing;
     if (bearing == null &&
@@ -219,8 +239,26 @@ class TrackingController {
   // ---------------- المسار ----------------
   void _onTick() {
     if (_disposed) return;
-    if (_driverNeedsResubscribe) _listenDriver();
+    final now = _clock();
+    if (_driverNeedsResubscribe) {
+      final at = _driverRetryAt;
+      if (at == null || !now.isBefore(at)) _listenDriver();
+    }
+    // GPS اتقفل بسبب خطأ مؤقت أو GPS مقفول: نعيد الاشتراك تلقائيًا.
+    // (الصلاحية المرفوضة محتاجة المستخدم، فمش بنكرر طلبها كل tick.)
+    if (_posDead && !_locationStarting) {
+      final i = locationIssue.value;
+      if (i == LocationIssue.unavailable || i == LocationIssue.serviceDisabled) {
+        _startLocation();
+      }
+    }
     if (_routeFailed) _maybeReroute(force: true);
+  }
+
+  Duration _backoff(int failures, {int extra = 0}) {
+    final e = failures + extra - 1;
+    final capped = e < 0 ? 0 : (e > 4 ? 4 : e);
+    return retryBackoffBase * (1 << capped);
   }
 
   void _maybeReroute({bool force = false}) {
@@ -240,6 +278,8 @@ class TrackingController {
       need = moved || off;
     }
     if (!need || _inFlight) return;
+    final retryAt = _routeRetryAt;
+    if (retryAt != null && _clock().isBefore(retryAt)) return; // backoff
 
     // Throttle: لو لسه بدري، نأجّل لطلب واحد في آخر الفترة.
     final last = _lastRequestAt;
@@ -260,6 +300,7 @@ class TrackingController {
     _inFlight = true;
     _lastRequestAt = _clock();
     routeLoading.value = true;
+    var succeeded = false;
     try {
       final res = await routing.getRoute(start: from, destination: to);
       if (_disposed) return;
@@ -268,21 +309,32 @@ class TrackingController {
       networkOk.value = true;
       routeUnavailable.value = false;
       _routeFailed = false;
+      _routeFailures = 0;
+      _routeRetryAt = null;
+      succeeded = true;
     } on RoutingException catch (e) {
       debugPrint('routing failed: $e');
       if (_disposed) return;
       if (e.isConnectivity) networkOk.value = false;
       routeUnavailable.value = true; // آخر مسار معروف يفضل معروض
       _routeFailed = true;
+      _routeFailures++;
+      _routeRetryAt = _clock().add(_backoff(_routeFailures,
+          extra: e.kind == RoutingFailure.rateLimited ? 1 : 0));
     } catch (e) {
       debugPrint('routing unexpected error: $e');
       if (_disposed) return;
       routeUnavailable.value = true;
       _routeFailed = true;
+      _routeFailures++;
+      _routeRetryAt = _clock().add(_backoff(_routeFailures));
     } finally {
       _inFlight = false;
       if (!_disposed) routeLoading.value = false;
     }
+    // السائق ممكن يكون اتحرك أثناء انتظار الرد: الرد اتحسب من نقطة قديمة.
+    // نفحص تاني بعد ما _inFlight اتقفل (الـ throttle بيحكم التوقيت).
+    if (succeeded && !_disposed) _maybeReroute();
   }
 
   // ---------------- التنظيف ----------------
@@ -293,6 +345,7 @@ class TrackingController {
     _pendingTimer?.cancel();
     _posSub?.cancel();
     _driverSub?.cancel();
+    publisher?.close();
     _ticker = null;
     _pendingTimer = null;
     _posSub = null;

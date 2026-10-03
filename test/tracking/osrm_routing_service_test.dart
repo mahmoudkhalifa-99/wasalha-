@@ -89,4 +89,33 @@ void main() {
     expect(e.kind, RoutingFailure.timeout);
     expect(e.isConnectivity, isTrue);
   });
+
+  test('بيبعت User-Agent يعرّف التطبيق (شرط سيرفر OSRM العام)', () async {
+    late Map<String, String> headers;
+    final s = OsrmRoutingService(
+      client: MockClient((req) async {
+        headers = req.headers;
+        return http.Response(_okBody, 200);
+      }),
+    );
+    await s.getRoute(start: _start, destination: _dest);
+    expect(headers['User-Agent'], contains('Wasalha'));
+  });
+
+  test('geometry ناقصة = server (من غير crash)', () async {
+    final s = OsrmRoutingService(
+        client: MockClient((_) async => http.Response(
+            '{"code":"Ok","routes":[{"distance":1,"duration":1,"geometry":{}}]}',
+            200)));
+    expect((await _expectFailure(s)).kind, RoutingFailure.server);
+  });
+
+  test('مسار بنقطة واحدة فقط = noRoute', () async {
+    final s = OsrmRoutingService(
+        client: MockClient((_) async => http.Response(
+            '{"code":"Ok","routes":[{"distance":1,"duration":1,'
+            '"geometry":{"coordinates":[[31.0,30.55]]}}]}',
+            200)));
+    expect((await _expectFailure(s)).kind, RoutingFailure.noRoute);
+  });
 }

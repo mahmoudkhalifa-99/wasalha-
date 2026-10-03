@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/map/map_config.dart';
 import '../../../core/map/routing_service.dart';
@@ -173,10 +174,18 @@ class _TrackingMapState extends State<TrackingMap> {
               valueListenable: _c.driver,
               builder: (context, fix, _) => AnimatedDriverMarkerLayer(fix: fix),
             ),
-            const RichAttributionWidget(
+            RichAttributionWidget(
               alignment: AttributionAlignment.bottomLeft,
               showFlutterMapAttribution: false,
-              attributions: [TextSourceAttribution(MapConfig.attribution)],
+              attributions: [
+                TextSourceAttribution(
+                  MapConfig.attribution,
+                  // النص فيه © بالفعل — من غير ده بيظهر "© ©".
+                  prependCopyright: false,
+                  onTap: () => launchUrl(Uri.parse(MapConfig.osmCopyrightUrl),
+                      mode: LaunchMode.externalApplication),
+                ),
+              ],
             ),
           ],
         ),

@@ -98,9 +98,8 @@ class _AnimatedDriverMarkerLayerState extends State<AnimatedDriverMarkerLayer>
 
   double _currentBearing() {
     if (!_c.isAnimating && _c.value >= 1) return _toB;
-    // أقصر دوران بين زاويتين.
-    final delta = ((_toB - _fromB + 540) % 360) - 180;
-    return (_fromB + delta * _t) % 360;
+    // أقصر دوران بين زاويتين (359° → 1° = +2°).
+    return lerpBearing(_fromB, _toB, _t);
   }
 
   @override

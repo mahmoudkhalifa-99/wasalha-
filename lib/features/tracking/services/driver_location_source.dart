@@ -28,7 +28,11 @@ class FirestoreDriverLocationSource implements DriverLocationSource {
         .snapshots()
         .map(_parse)
         .where((f) => f != null)
-        .cast<GeoFix>();
+        .cast<GeoFix>()
+        // وثيقة المستخدم بتتحدث لأسباب تانية (token, isOnline...) — نتجاهل
+        // أي snapshot موقعه نفس اللي قبله عشان ما نعيدش حساب/Rebuild.
+        .distinct((a, b) =>
+            a.position == b.position && a.updatedAt == b.updatedAt);
   }
 
   GeoFix? _parse(DocumentSnapshot<Map<String, dynamic>> snap) {
@@ -67,7 +71,15 @@ class DriverLocationPublisher {
   LatLng? _lastPos;
   DateTime? _lastAt;
 
+  // كتابة واحدة في نفس الوقت: لو Firestore أوفلاين (persistence شغال) الـ Future
+  // مبيكملش، فمن غير الحارس كانت الكتابات بتتراكم في الطابور وتتبعت كلها لما
+  // النت يرجع. هنا بنحتفظ بآخر موقع بس.
+  bool _writing = false;
+  bool _closed = false;
+  _LocPayload? _queued;
+
   void publish(GeoFix fix) {
+    if (_closed) return;
     final now = DateTime.now();
     final lp = _lastPos;
     final la = _lastAt;
@@ -82,15 +94,39 @@ class DriverLocationPublisher {
     }
     _lastPos = fix.position;
     _lastAt = now;
-    // مش بنعمل await: Firestore بيكمّل الكتابة لما النت يرجع.
+    final payload = _LocPayload(
+        fix.position.latitude, fix.position.longitude, now.millisecondsSinceEpoch);
+    if (_writing) {
+      _queued = payload; // آخر موقع بس
+      return;
+    }
+    _write(payload);
+  }
+
+  void _write(_LocPayload p) {
+    _writing = true;
     _db.collection('users').doc(driverId).update({
-      'location': {
-        'lat': fix.position.latitude,
-        'lng': fix.position.longitude,
-        'updatedAt': now.millisecondsSinceEpoch,
-      },
+      'location': {'lat': p.lat, 'lng': p.lng, 'updatedAt': p.ts},
     }).catchError((Object e) {
       debugPrint('driver location publish failed: $e');
+    }).whenComplete(() {
+      _writing = false;
+      final q = _queued;
+      _queued = null;
+      if (q != null && !_closed) _write(q);
     });
   }
+
+  /// يوقف أي كتابة جديدة (بيتنادى من TrackingController.dispose).
+  void close() {
+    _closed = true;
+    _queued = null;
+  }
+}
+
+class _LocPayload {
+  const _LocPayload(this.lat, this.lng, this.ts);
+  final double lat;
+  final double lng;
+  final int ts;
 }

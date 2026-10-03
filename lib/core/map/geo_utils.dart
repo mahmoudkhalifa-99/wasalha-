@@ -30,6 +30,13 @@ double bearingDegrees(LatLng from, LatLng to) {
   return (deg + 360) % 360;
 }
 
+/// استيفاء زاوية بأقصر دوران: من 359° إلى 1° بيمشي +2° (مش −358°).
+/// الناتج في [0, 360). t بين 0 و1.
+double lerpBearing(double from, double to, double t) {
+  final delta = ((to - from + 540) % 360) - 180;
+  return (from + delta * t) % 360;
+}
+
 /// أقل مسافة (بالمتر) بين نقطة وخط مكسور (Polyline).
 /// بنحوّل لإحداثيات محلية بالمتر (تقريب مناسب للمسافات القصيرة).
 double distanceToPolylineMeters(LatLng p, List<LatLng> line) {

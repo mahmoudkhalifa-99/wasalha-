@@ -55,9 +55,14 @@ class GeolocatorLocationService implements LocationService {
   @override
   Future<LatLng?> currentLatLng() async {
     try {
-      final p = await Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
-      ).first.timeout(const Duration(seconds: 12));
+      // getCurrentPosition (مش Stream مؤقت): بيلغي نفسه عند الـ timeout
+      // ومبيسيبش اشتراك GPS ثاني شغال جنب اشتراك التتبع.
+      final p = await Geolocator.getCurrentPosition(
+        // ignore: deprecated_member_use
+        desiredAccuracy: LocationAccuracy.high,
+        // ignore: deprecated_member_use
+        timeLimit: const Duration(seconds: 12),
+      );
       return LatLng(p.latitude, p.longitude);
     } catch (_) {
       try {

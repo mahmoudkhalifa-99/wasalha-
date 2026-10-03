@@ -36,7 +36,11 @@ class OsrmRoutingService implements RoutingService {
     http.Response res;
     try {
       res = await _client
-          .get(uri, headers: const {'Accept': 'application/json'})
+          .get(uri, headers: const {
+            'Accept': 'application/json',
+            // سياسة سيرفر OSRM العام: User-Agent واضح يعرّف التطبيق.
+            'User-Agent': 'Wasalha/1.0 (com.wasalah.app)',
+          })
           .timeout(timeout);
     } on TimeoutException {
       throw const RoutingException(RoutingFailure.timeout);

@@ -70,4 +70,25 @@ void main() {
       expect(formatEta(5400), '1 س 30 د');
     });
   });
+
+  group('lerpBearing (أقصر دوران)', () {
+    test('359° → 1° بيعدّي من الشمال مش بيلف 358°', () {
+      expect(lerpBearing(359, 1, 0), closeTo(359, 1e-6));
+      expect(lerpBearing(359, 1, 0.25), closeTo(359.5, 1e-6));
+      expect(lerpBearing(359, 1, 1), closeTo(1, 1e-6));
+    });
+
+    test('1° → 359° عكس الاتجاه', () {
+      expect(lerpBearing(1, 359, 0.25), closeTo(0.5, 1e-6));
+      expect(lerpBearing(1, 359, 1), closeTo(359, 1e-6));
+    });
+
+    test('دوران عادي 10° → 100° والنتيجة دايمًا في [0,360)', () {
+      expect(lerpBearing(10, 100, 0.5), closeTo(55, 1e-6));
+      for (final t in [0.0, 0.3, 0.7, 1.0]) {
+        final v = lerpBearing(350, 20, t);
+        expect(v, inInclusiveRange(0, 360));
+      }
+    });
+  });
 }

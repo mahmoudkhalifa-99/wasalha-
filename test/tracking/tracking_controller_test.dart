@@ -57,6 +57,29 @@ class FakeSource implements DriverLocationSource {
   Stream<GeoFix> watch() => ctrl.stream;
 }
 
+/// Routing بيستنى الاختبار يكمّل الرد يدويًا (لمحاكاة رد بطيء).
+class GatedRouting implements RoutingService {
+  final List<Completer<RouteResult>> pending = [];
+  int calls = 0;
+
+  @override
+  Future<RouteResult> getRoute({
+    required LatLng start,
+    required LatLng destination,
+  }) {
+    calls++;
+    final c = Completer<RouteResult>();
+    pending.add(c);
+    return c.future;
+  }
+}
+
+RouteResult _route() => RouteResult(
+      points: const [LatLng(30.55, 31.0), LatLng(30.56, 31.01)],
+      distanceMeters: 1000,
+      durationSeconds: 120,
+    );
+
 GeoFix fix(double lat, double lng) =>
     GeoFix(position: LatLng(lat, lng), updatedAt: DateTime.now());
 
@@ -80,6 +103,7 @@ void main() {
       driverSource: source,
       customerLocation: _customer,
       minRouteInterval: Duration.zero,
+      retryBackoffBase: Duration.zero, // عشان اختبارات التعافي ما تستناش
     );
   });
 
@@ -187,5 +211,84 @@ void main() {
     await pump();
     expect(source.ctrl.hasListener, isFalse);
     expect(location.ctrl.hasListener, isFalse);
+  });
+
+  test('بعد فشل Routing (429): backoff بيمنع الضرب على الـ API مع كل نقطة GPS',
+      () async {
+    final r = FakeRouting()
+      ..failWith = const RoutingException(RoutingFailure.rateLimited);
+    final b = TrackingController(
+      location: FakeLocation(),
+      routing: r,
+      driverSource: source,
+      customerLocation: _customer,
+      minRouteInterval: Duration.zero, // الـ backoff الافتراضي (10s+) شغال
+    );
+    await b.start();
+    for (var i = 0; i < 5; i++) {
+      source.ctrl.add(fix(30.55 + i * 0.002, 31.0)); // ~222 متر كل مرة
+      await pump();
+    }
+    expect(r.calls, 1);
+    expect(b.routeUnavailable.value, isTrue);
+    b.dispose();
+  });
+
+  test('السائق اتحرك أثناء انتظار الرد: إعادة حساب واحدة بعد وصول الرد', () async {
+    final g = GatedRouting();
+    final b = TrackingController(
+      location: FakeLocation(),
+      routing: g,
+      driverSource: source,
+      customerLocation: _customer,
+      minRouteInterval: Duration.zero,
+    );
+    await b.start();
+    source.ctrl.add(fix(30.55, 31.0));
+    await pump();
+    expect(g.calls, 1);
+    source.ctrl.add(fix(30.553, 31.0)); // ~333 متر والطلب الأول لسه معلّق
+    await pump();
+    expect(g.calls, 1); // طلب واحد في الجو
+    g.pending[0].complete(_route());
+    await pump();
+    expect(g.calls, 2); // الرد قديم → اتطلب مسار جديد من الموقع الحالي
+    g.pending[1].complete(_route());
+    await pump();
+    expect(g.calls, 2);
+    b.dispose();
+  });
+
+  test('خطأ مؤقت في GPS: بيعيد الاشتراك تلقائيًا في الـ tick', () async {
+    final loc = FakeLocation();
+    final b = TrackingController(
+      location: loc,
+      routing: routing,
+      customerLocation: _customer,
+      tick: const Duration(milliseconds: 30),
+    );
+    await b.start();
+    expect(loc.watchCalls, 1);
+    loc.ctrl.addError(Exception('boom'));
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    expect(loc.watchCalls, greaterThanOrEqualTo(2));
+    expect(loc.ctrl.hasListener, isTrue);
+    expect(b.locationIssue.value, isNull);
+    b.dispose();
+  });
+
+  test('صلاحية مرفوضة: الـ tick ما بيكررش طلب الصلاحية ولا بيفتح stream', () async {
+    final loc = FakeLocation(issue: LocationIssue.denied);
+    final b = TrackingController(
+      location: loc,
+      routing: routing,
+      customerLocation: _customer,
+      tick: const Duration(milliseconds: 30),
+    );
+    await b.start();
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    expect(loc.watchCalls, 0);
+    expect(b.locationIssue.value, LocationIssue.denied);
+    b.dispose();
   });
 }
