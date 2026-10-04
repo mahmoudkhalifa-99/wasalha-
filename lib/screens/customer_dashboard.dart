@@ -10,6 +10,9 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../config_constants.dart';
+import '../core/map/geo_utils.dart' as geo;
+import '../features/tracking/models/tracking_models.dart' show GeoFix;
+import '../features/tracking/services/captain_locations.dart';
 import '../models/models.dart';
 import '../services/back_interceptor.dart';
 import '../services/firebase_service.dart';
@@ -19,6 +22,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_shadows.dart';
 import '../theme/app_text.dart';
 import '../utils.dart' as utils;
+import '../widgets/captains_offers_map.dart';
 import '../widgets/common.dart';
 import '../widgets/leaflet_map.dart';
 import '../widgets/map_location_picker.dart';
@@ -69,6 +73,8 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   VehicleType _selectedVehicle = VehicleType.motorcycle;
   Order? _activeOrder;
   List<Offer> _incomingOffers = [];
+  final CaptainLocations _captainLocs = CaptainLocations();
+  bool _offersByDistance = false; // ترتيب العروض: false = الأرخص، true = الأقرب
 
   double _actualRoadDist = 0;
   bool _isCalculatingDist = false;
@@ -183,6 +189,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     _subOrders?.cancel();
     _subOffers?.cancel();
     _subDriver?.cancel();
+    _captainLocs.dispose();
     _pickupNoteCtrl.dispose();
     _dropoffNoteCtrl.dispose();
     _pharmacyNoteCtrl.dispose();
@@ -209,8 +216,12 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                   stripFirestore(d.data()) as Map<String, dynamic>, d.id))
               .toList();
         });
+        // نتابع مواقع الكباتن اللي قدّموا عروض (عشان العميل يختار الأقرب).
+        _captainLocs.sync(_incomingOffers.map((o) => o.driverId));
       }, onError: (e) =>
           handleFirestoreError(e, OperationType.list, 'offers (order: ${order.id})'));
+    } else {
+      _captainLocs.sync(const []);
     }
 
     if (order != null &&
@@ -385,10 +396,11 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     String? restaurantName,
     List<CartItem>? foodItems,
     String? prescriptionImage,
+    PickedPlace? deliveryPoint,
   }) async {
-    // من شاشة المطعم بيجي deliveryVillage؛ غير كده بنستخدم اللي اختاره العميل
-    // (قرية من القائمة أو مكان فعلي من الخريطة/الـ GPS).
-    final dp = deliveryVillage == null ? _dropoffPoint : null;
+    // من شاشة المطعم بيجي deliveryVillage أو deliveryPoint (مكان فعلي من
+    // الخريطة/الـ GPS)؛ غير كده بنستخدم اللي اختاره العميل في الشاشة الرئيسية.
+    final dp = deliveryPoint ?? (deliveryVillage == null ? _dropoffPoint : null);
     final finalVillage = deliveryVillage ?? _dropoffVillage;
     if (finalVillage == null && dp == null) {
       showAppAlert(context, 'يرجى تحديد مكان التوصيل');
@@ -569,6 +581,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                 restaurantName: data.name,
                 specialRequest: data.items,
                 deliveryVillage: data.village,
+                deliveryPoint: data.point,
                 price: 35, // سعر مبدأي تقديري (نفس نسخة الويب)
                 pickup: const OrderPlace(
                     address: '', lat: 30.2931, lng: 30.9863, villageName: 'خارجي'),
@@ -581,9 +594,10 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
             restaurant: _viewingRestaurant!,
             initialDropoffVillage: _dropoffVillage,
             initialDistrict: _dropoffDistrict,
+            initialDropoffPoint: _dropoffPoint,
             onClose: () => setState(() => _viewingRestaurant = null),
             onConfirmOrder: (cart, foodTotal, deliveryTotal, grandTotal, distance,
-                village, specialRequest) {
+                village, point, specialRequest) {
               _handleCreateOrder(
                 restaurantId: _viewingRestaurant!.id,
                 restaurantName: _viewingRestaurant!.name,
@@ -592,6 +606,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                 price: grandTotal,
                 distance: distance,
                 deliveryVillage: village,
+                deliveryPoint: point,
                 pickup: OrderPlace(
                     address: _viewingRestaurant!.name,
                     lat: _viewingRestaurant!.lat,
@@ -1357,31 +1372,114 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     }
   }
 
-  Widget _waitingForOffersView(Order order) {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(48),
-          decoration: BoxDecoration(
-            color: C.white,
-            shape: BoxShape.circle,
-            border: Border.all(color: C.emerald50, width: 4),
-            boxShadow: Sh.xxl(color: C.emerald900.withOpacity(0.1)),
-          ),
-          child: Pulse(
-              child: const Icon(LucideIcons.radar, size: 80, color: C.emerald600)),
+
+  /// ترتيب العروض: الأرخص (الافتراضي) أو الأقرب لنقطة الاستلام/العميل.
+  List<Offer> _orderedOffers(Order order, Map<String, GeoFix> locs) {
+    final list = List<Offer>.of(_sortedOffers); // مرتبة بالسعر
+    if (!_offersByDistance) return list;
+    final ref = offersReferencePoint(order);
+    list.sort((a, b) {
+      final da = captainDistanceMeters(ref, locs[a.driverId]);
+      final dbm = captainDistanceMeters(ref, locs[b.driverId]);
+      if (da == null && dbm == null) return a.price.compareTo(b.price);
+      if (da == null) return 1; // اللي موقعه مجهول في الآخر
+      if (dbm == null) return -1;
+      final c = da.compareTo(dbm);
+      return c != 0 ? c : a.price.compareTo(b.price);
+    });
+    return list;
+  }
+
+  Widget _sortChip(String text, bool selected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? C.emerald600 : C.white,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: selected ? C.emerald600 : C.slate200),
         ),
-        const SizedBox(height: 24),
-        Text('جاري البحث عن كباتن متاحين...',
-            textAlign: TextAlign.center,
-            style: T.s(24, T.w900, C.slate900, letterSpacing: -0.6)),
-        const SizedBox(height: 4),
-        Text('ستظهر العروض في الأسفل خلال لحظات',
-            style: T.s(11, T.w700, C.slate400)),
-        const SizedBox(height: 24),
-        for (final offer in _sortedOffers)
-          Container(
-            margin: const EdgeInsets.only(bottom: 16),
+        child: Text(text,
+            style: T.s(11, T.w900, selected ? C.white : C.slate600)),
+      ),
+    );
+  }
+
+  /// قسم العروض: ترتيب (الأرخص/الأقرب) + خريطة أماكن الكباتن + كروت العروض.
+  Widget _offersSection(Order order, Map<String, GeoFix> locs) {
+    final offers = _orderedOffers(order, locs);
+    if (offers.isEmpty) return const SizedBox.shrink();
+    final ref = offersReferencePoint(order);
+    final nearestId = nearestOfferDriverId(ref, offers, locs);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        CaptainsOffersMap(order: order, offers: offers, locations: locs),
+        const SizedBox(height: 16),
+        if (offers.length > 1) ...[
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              _sortChip('الأقرب', _offersByDistance,
+                  () => setState(() => _offersByDistance = true)),
+              const SizedBox(width: 8),
+              _sortChip('الأرخص', !_offersByDistance,
+                  () => setState(() => _offersByDistance = false)),
+              const SizedBox(width: 10),
+              Text('ترتيب العروض:', style: T.s(10, T.w800, C.slate400)),
+            ],
+          ),
+          const SizedBox(height: 12),
+        ],
+        for (final offer in offers)
+          _offerCard(order, offer, locs, nearestId),
+      ],
+    );
+  }
+
+  /// سطر المسافة + علامة "الأقرب" تحت اسم الكابتن في كارت العرض.
+  List<Widget> _offerDistanceWidgets(
+      Order order, Offer offer, Map<String, GeoFix> locs, String? nearestId) {
+    final ref = offersReferencePoint(order);
+    final fix = locs[offer.driverId];
+    final d = captainDistanceMeters(ref, fix);
+    final isNearest = nearestId == offer.driverId && d != null;
+    final toWhat = orderPickupPoint(order) != null ? 'نقطة الاستلام' : 'موقعك';
+    String text;
+    if (fix == null) {
+      text = 'موقعه غير متاح الآن';
+    } else if (d == null) {
+      text = 'موقعه ظاهر على الخريطة';
+    } else {
+      text = 'يبعد حوالي ${geo.formatDistance(d)} عن $toWhat';
+    }
+    return [
+      const SizedBox(height: 6),
+      Text(text,
+          textAlign: TextAlign.right,
+          style: T.s(10, T.w700, d == null ? C.slate300 : C.slate600)),
+      if (isNearest && _incomingOffers.map((o) => o.driverId).toSet().length > 1)
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+            decoration: BoxDecoration(
+              color: C.emerald50,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: C.emerald500.withOpacity(0.4)),
+            ),
+            child: Text('الأقرب ✓', style: T.s(9, T.w900, C.emerald700)),
+          ),
+        ),
+    ];
+  }
+
+  Widget _offerCard(Order order, Offer offer, Map<String, GeoFix> locs,
+      String? nearestId) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               color: C.white,
@@ -1425,11 +1523,41 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                             size: 12, color: C.amber400),
                       ],
                     ),
+                    ..._offerDistanceWidgets(order, offer, locs, nearestId),
                   ],
                 ),
               ],
             ),
           ),
+    );
+  }
+
+  Widget _waitingForOffersView(Order order) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(48),
+          decoration: BoxDecoration(
+            color: C.white,
+            shape: BoxShape.circle,
+            border: Border.all(color: C.emerald50, width: 4),
+            boxShadow: Sh.xxl(color: C.emerald900.withOpacity(0.1)),
+          ),
+          child: Pulse(
+              child: const Icon(LucideIcons.radar, size: 80, color: C.emerald600)),
+        ),
+        const SizedBox(height: 24),
+        Text('جاري البحث عن كباتن متاحين...',
+            textAlign: TextAlign.center,
+            style: T.s(24, T.w900, C.slate900, letterSpacing: -0.6)),
+        const SizedBox(height: 4),
+        Text('ستظهر العروض في الأسفل خلال لحظات',
+            style: T.s(11, T.w700, C.slate400)),
+        const SizedBox(height: 24),
+        ValueListenableBuilder<Map<String, GeoFix>>(
+          valueListenable: _captainLocs.locations,
+          builder: (context, locs, _) => _offersSection(order, locs),
+        ),
         const SizedBox(height: 16),
         GestureDetector(
           onTap: () => _cancelPendingOrder(order),
@@ -2450,15 +2578,24 @@ class RestaurantMenuView extends StatefulWidget {
   final Restaurant restaurant;
   final Village? initialDropoffVillage;
   final District? initialDistrict;
+  final PickedPlace? initialDropoffPoint;
   final VoidCallback onClose;
-  final void Function(List<CartItem> cart, double foodTotal, double deliveryTotal,
-      double grandTotal, double distance, Village village, String specialRequest) onConfirmOrder;
+  final void Function(
+      List<CartItem> cart,
+      double foodTotal,
+      double deliveryTotal,
+      double grandTotal,
+      double distance,
+      Village? village,
+      PickedPlace? point,
+      String specialRequest) onConfirmOrder;
 
   const RestaurantMenuView({
     super.key,
     required this.restaurant,
     required this.initialDropoffVillage,
     required this.initialDistrict,
+    this.initialDropoffPoint,
     required this.onClose,
     required this.onConfirmOrder,
   });
@@ -2485,13 +2622,17 @@ class _RestaurantMenuViewState extends State<RestaurantMenuView> {
   District? _currentDistrict;
   Village? _currentVillage;
 
+  /// مكان التوصيل لو اتحدد بالـ GPS أو من الخريطة (بيتقدّم على القرية).
+  PickedPlace? _point;
+
   @override
   void initState() {
     super.initState();
     BackInterceptor.register(_onBack);
     _currentDistrict = widget.initialDistrict;
     _currentVillage = widget.initialDropoffVillage;
-    if (_currentVillage != null) _recalc();
+    _point = widget.initialDropoffPoint;
+    if (_currentVillage != null || _point != null) _recalc();
   }
 
   @override
@@ -2502,12 +2643,15 @@ class _RestaurantMenuViewState extends State<RestaurantMenuView> {
   }
 
   Future<void> _recalc() async {
+    final pt = _point;
     final v = _currentVillage;
-    if (v == null) return;
+    final lat = pt?.latitude ?? v?.center.lat;
+    final lng = pt?.longitude ?? v?.center.lng;
+    if (lat == null || lng == null) return;
     setState(() => _isCalculating = true);
     try {
-      final res = await utils.getRoadDistance(widget.restaurant.lat,
-          widget.restaurant.lng, v.center.lat, v.center.lng);
+      final res = await utils.getRoadDistance(
+          widget.restaurant.lat, widget.restaurant.lng, lat, lng);
       if (mounted) {
         setState(() {
           _roadDist = res.distance;
@@ -2553,9 +2697,9 @@ class _RestaurantMenuViewState extends State<RestaurantMenuView> {
       _cart.fold(0.0, (sum, i) => sum + i.price * i.quantity);
 
   double get _deliveryPrice {
-    final v = _currentVillage;
-    if (v == null) return 0;
-    final isSameVillage = widget.restaurant.address == v.name;
+    final destName = _currentVillage?.name ?? _point?.placeName;
+    if (destName == null) return 0;
+    final isSameVillage = widget.restaurant.address == destName;
     if (isSameVillage) return configDefaultPricing.sameVillagePrice;
     final calc = _roadDist * configDefaultPricing.foodOutsidePricePerKm;
     final rounded = calc.roundToDouble();
@@ -2667,9 +2811,23 @@ class _RestaurantMenuViewState extends State<RestaurantMenuView> {
                         selectedVillage: _currentVillage,
                         onSelectDistrict: (d) => setState(() => _currentDistrict = d),
                         onSelectVillage: (v) {
-                          setState(() => _currentVillage = v);
+                          setState(() {
+                            _currentVillage = v;
+                            _point = null; // اختار قرية يدويًا: نرجع لمركز القرية
+                          });
                           _recalc();
                         },
+                        onPickedOnMap: (pl) {
+                          setState(() {
+                            _point = pl;
+                            _currentDistrict = pl.knownMatch?.district;
+                            _currentVillage = pl.knownMatch?.village;
+                          });
+                          _recalc();
+                        },
+                        pickedAddress: _point?.displayText,
+                        customPlaceName: _point?.placeName,
+                        customArea: _point?.area,
                         minimal: true,
                       ),
                       if (widget.restaurant.menuImageURL != null) ...[
@@ -2827,7 +2985,7 @@ class _RestaurantMenuViewState extends State<RestaurantMenuView> {
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
                               Text(
-                                  'التوصيل لـ ${_currentVillage?.name ?? "..."}',
+                                  'التوصيل لـ ${_currentVillage?.name ?? _point?.placeName ?? "..."}',
                                   overflow: TextOverflow.ellipsis,
                                   style: T.s(9, T.w900, C.slate400,
                                       letterSpacing: 1.2)),
@@ -2845,7 +3003,7 @@ class _RestaurantMenuViewState extends State<RestaurantMenuView> {
                   ),
                   const SizedBox(height: 20),
                   PressScale(
-                    onTap: (_currentVillage == null ||
+                    onTap: ((_currentVillage == null && _point == null) ||
                             (_cart.isEmpty && _specialRequestCtrl.text.isEmpty) ||
                             _isCalculating)
                         ? null
@@ -2855,7 +3013,8 @@ class _RestaurantMenuViewState extends State<RestaurantMenuView> {
                               _deliveryPrice,
                               _finalEstimatedPrice,
                               _roadDist,
-                              _currentVillage!,
+                              _currentVillage,
+                              _point,
                               _specialRequestCtrl.text,
                             ),
                     child: Container(
@@ -3099,9 +3258,15 @@ class _RestaurantMenuViewState extends State<RestaurantMenuView> {
 class ManualRestaurantData {
   final String name;
   final String items;
-  final Village village;
+  final Village? village;
+
+  /// مكان التوصيل لو اتحدد بالـ GPS أو من الخريطة.
+  final PickedPlace? point;
   const ManualRestaurantData(
-      {required this.name, required this.items, required this.village});
+      {required this.name,
+      required this.items,
+      required this.village,
+      this.point});
 }
 
 class ManualRestaurantView extends StatefulWidget {
@@ -3119,6 +3284,7 @@ class _ManualRestaurantViewState extends State<ManualRestaurantView> {
   final _itemsCtrl = TextEditingController();
   District? _district;
   Village? _village;
+  PickedPlace? _point;
 
   @override
   void dispose() {
@@ -3131,7 +3297,7 @@ class _ManualRestaurantViewState extends State<ManualRestaurantView> {
   Widget build(BuildContext context) {
     final canSubmit = _restNameCtrl.text.isNotEmpty &&
         _itemsCtrl.text.isNotEmpty &&
-        _village != null;
+        (_village != null || _point != null);
     return Positioned.fill(
       child: Material(
         color: C.slate50,
@@ -3266,7 +3432,18 @@ class _ManualRestaurantViewState extends State<ManualRestaurantView> {
                       selectedDistrict: _district,
                       selectedVillage: _village,
                       onSelectDistrict: (d) => setState(() => _district = d),
-                      onSelectVillage: (v) => setState(() => _village = v),
+                      onSelectVillage: (v) => setState(() {
+                        _village = v;
+                        _point = null;
+                      }),
+                      onPickedOnMap: (pl) => setState(() {
+                        _point = pl;
+                        _district = pl.knownMatch?.district;
+                        _village = pl.knownMatch?.village;
+                      }),
+                      pickedAddress: _point?.displayText,
+                      customPlaceName: _point?.placeName,
+                      customArea: _point?.area,
                       minimal: true,
                     ),
                   ],
@@ -3286,7 +3463,8 @@ class _ManualRestaurantViewState extends State<ManualRestaurantView> {
                     : () => widget.onConfirm(ManualRestaurantData(
                         name: _restNameCtrl.text,
                         items: _itemsCtrl.text,
-                        village: _village!)),
+                        village: _village,
+                        point: _point)),
                 child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(vertical: 28),

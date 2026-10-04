@@ -19,6 +19,7 @@ import '../theme/app_text.dart';
 import '../utils.dart' as utils;
 import '../widgets/common.dart';
 import '../widgets/leaflet_map.dart';
+import '../widgets/order_details_panel.dart';
 import 'activity_view.dart';
 import 'chat_view.dart';
 import 'profile_view.dart';
@@ -751,59 +752,15 @@ class _CourierDashboardState extends State<CourierDashboard> {
                                 ),
                             ],
                           ),
-                          if (o.foodItems != null || o.specialRequest != null)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 8),
-                              child: Container(
-                                padding: const EdgeInsets.only(top: 8),
-                                decoration: BoxDecoration(
-                                  border: Border(
-                                      top: BorderSide(color: C.slate100)),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    if (o.foodItems != null)
-                                      Text(
-                                          'الأصناف: ${o.foodItems!.map((i) => i.name).join("، ")}',
-                                          textAlign: TextAlign.right,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: T.s(9, T.w700, C.slate400)),
-                                    if (o.specialRequest != null)
-                                      Padding(
-                                        padding: const EdgeInsets.only(top: 4),
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 10, vertical: 4),
-                                          decoration: BoxDecoration(
-                                            color: C.amber50,
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Text('طلب يدوي خاص متوفر',
-                                                  style: T.s(9, T.w900,
-                                                      C.amber500)),
-                                              const SizedBox(width: 4),
-                                              const Icon(
-                                                  LucideIcons.clipboardList,
-                                                  size: 12,
-                                                  color: C.amber500),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ),
+
                         ],
                       ),
                     ),
                   ],
                 ),
+                const SizedBox(height: 16),
+                // تفاصيل الطلب كاملة (بما فيها صورة الروشتة) قبل تقديم العرض
+                OrderDetailsPanel(order: o),
                 const SizedBox(height: 24),
                 PressScale(
                   onTap: () => setState(() {
@@ -1005,6 +962,17 @@ class _CourierDashboardState extends State<CourierDashboard> {
                     ],
                   ),
                 ),
+              ],
+              if (order.prescriptionImage != null &&
+                  order.prescriptionImage!.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Text('صورة الروشتة / الدواء:',
+                      style: T.s(10, T.w900, C.rose500, letterSpacing: 1.2)),
+                ),
+                const SizedBox(height: 6),
+                PrescriptionPreview(image: order.prescriptionImage!),
               ],
               const SizedBox(height: 20),
               Row(
