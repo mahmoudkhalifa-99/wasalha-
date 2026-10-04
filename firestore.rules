@@ -117,6 +117,27 @@ service cloud.firestore {
           || isAdmin());
     }
 
+    // ───────────── مواقع الكباتن ─────────────
+    // موقع الكابتن بقى هنا (مش في users/{id} اللي مقروء لأي مستخدم مسجّل).
+    // الوثيقة: { lat, lng, updatedAt, viewers: [معرّفات العملاء] }
+    // القراءة: الكابتن نفسه، الإدارة، أو عميل الكابتن حاطه في `viewers` (تطبيق
+    // الكابتن بيضيف عميل الطلب اللي قدّم عليه عرض أو اتعيّن عليه، وبيشيله لما
+    // الطلب يخلص أو يروح لكابتن تاني). الكابتن بيعرّض موقعه هو بس، فمفيش تسريب
+    // لو حط حد غلط.
+    match /driver_locations/{driverId} {
+      allow read: if signedIn()
+          && (request.auth.uid == driverId
+              || isStaff()
+              || request.auth.uid in resource.data.get('viewers', []));
+      allow create, update: if canWrite()
+          && request.auth.uid == driverId
+          && myRole() == 'DRIVER'
+          && request.resource.data.keys().hasOnly(['lat', 'lng', 'updatedAt', 'viewers'])
+          && request.resource.data.get('viewers', []) is list
+          && request.resource.data.get('viewers', []).size() <= 30;
+      allow delete: if signedIn() && (request.auth.uid == driverId || isAdmin());
+    }
+
     // ───────────── الطلبات ─────────────
     match /orders/{orderId} {
       allow read: if signedIn();

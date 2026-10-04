@@ -83,3 +83,10 @@ flutter run
 - بعد أي تعديل في `Code.gs`: Deploy ← Manage deployments ← Edit ← New version.
 - الرسائل الجماعية: التطبيق بيكتب إشعار لكل مستخدم + طلب واحد للـ relay (`broadcast: true`) والـ relay بيتأكد إن المرسل ADMIN/OPERATOR.
 - لو المستخدم عمل Force stop للتطبيق أو الموبايل بيقتل التطبيقات (بعض أجهزة شاومي/سامسونج): فعّل "Autostart" وشيل التطبيق من توفير البطارية.
+
+
+## Firebase Storage (صور الروشتة)
+صورة الروشتة بتترفع على `prescriptions/{uid}/...` ويتحفظ رابطها في الطلب (بدل base64 جوه الوثيقة).
+فعّل Storage من Firebase Console، وانشر `storage.rules`:
+`firebase deploy --only storage` (أو Console ← Storage ← Rules).
+لو الرفع فشل والصورة أكبر من ~700 ك حرف، الطلب مبيتبعتش ويظهر للعميل رسالة.
