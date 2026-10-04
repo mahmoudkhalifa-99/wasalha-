@@ -144,6 +144,38 @@ class _CourierDashboardState extends State<CourierDashboard> {
   DateTime? _lastRouteAt;
   String? _lastRouteDest;
 
+  /// موقع حقيقي مرة واحدة (آخر معروف ثم الحالي) — عشان الخريطة والمسار
+  /// ميبدأوش من المركز الافتراضي، وعشان تشتغل حتى والكابتن أوفلاين.
+  Future<void> _refreshPosition({bool route = true}) async {
+    try {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return;
+      }
+      final last = await Geolocator.getLastKnownPosition();
+      if (last != null && mounted) {
+        setState(() =>
+            _currentLocation = ll.LatLng(last.latitude, last.longitude));
+      }
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 10),
+        ),
+      );
+      if (!mounted) return;
+      setState(() =>
+          _currentLocation = ll.LatLng(pos.latitude, pos.longitude));
+    } catch (e) {
+      debugPrint('refresh position failed: $e');
+    }
+    if (route && mounted) _recalcRoute(force: true);
+  }
+
   Future<void> _recalcRoute({bool force = false}) async {
     final order = _activeOrder;
     if (order == null) {
@@ -167,13 +199,23 @@ class _CourierDashboardState extends State<CourierDashboard> {
     try {
       final geo = await utils.getRouteGeometry(_currentLocation.latitude,
           _currentLocation.longitude, dest.lat, dest.lng);
-      if (mounted) {
-        setState(() => _routeGeometry = geo.isNotEmpty
-            ? geo.map((p) => ll.LatLng(p[0], p[1])).toList()
-            : [_currentLocation, ll.LatLng(dest.lat, dest.lng)]);
+      if (!mounted) return;
+      if (utils.isStraightFallback(geo)) {
+        // السيرفرات فشلت: منستبدلش طريق حقيقي قديم بخط مستقيم، وهنعيد
+        // المحاولة مع أول تحديث GPS بدل ما نستنى ١٥ ثانية.
+        _lastRouteAt = null;
+        if (_routeGeometry.length <= 2) {
+          setState(() => _routeGeometry = geo.isNotEmpty
+              ? geo.map((p) => ll.LatLng(p[0], p[1])).toList()
+              : [_currentLocation, ll.LatLng(dest.lat, dest.lng)]);
+        }
+        return;
       }
+      setState(() =>
+          _routeGeometry = geo.map((p) => ll.LatLng(p[0], p[1])).toList());
     } catch (_) {
-      if (mounted) {
+      _lastRouteAt = null;
+      if (mounted && _routeGeometry.length <= 2) {
         setState(() => _routeGeometry = [
               _currentLocation,
               ll.LatLng(dest.lat, dest.lng),
@@ -245,8 +287,9 @@ class _CourierDashboardState extends State<CourierDashboard> {
       if (!mounted) return;
       setState(() => _activeOrder = active);
       if (changed) {
-        _recalcRoute(force: true);
         _listenCustomerLocation();
+        // بنجيب الموقع الحقيقي الأول، وبعدها المسار منه.
+        _refreshPosition();
       }
     }, onError: (e) =>
         handleFirestoreError(e, OperationType.list, 'orders (active_driver)'));
@@ -818,7 +861,10 @@ class _CourierDashboardState extends State<CourierDashboard> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   PressScale(
-                    onTap: () => setState(() => _activeView = _CourierView.map),
+                    onTap: () {
+                      setState(() => _activeView = _CourierView.map);
+                      _refreshPosition();
+                    },
                     child: Container(
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
@@ -1175,7 +1221,10 @@ class _CourierDashboardState extends State<CourierDashboard> {
           children: [
             for (final t in tabs)
               GestureDetector(
-                onTap: () => setState(() => _activeView = t.$1),
+                onTap: () {
+                  setState(() => _activeView = t.$1);
+                  if (t.$1 == _CourierView.map) _refreshPosition();
+                },
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [

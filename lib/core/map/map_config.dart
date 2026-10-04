@@ -42,6 +42,10 @@ class MapConfig {
   );
   static const List<String> tileSubdomains = ['a', 'b', 'c'];
 
+  /// تايلز احتياطية بتتفعّل تلقائيًا لو الأساسية فشلت تتحمّل (شبكة/حظر).
+  static const String fallbackTileUrlTemplate =
+      'https://tile.openstreetmap.de/{z}/{x}/{y}.png';
+
   /// Retina بس لو القالب نفسه بيدعم {r}. من غير كده flutter_map بيطلب تايلز
   /// zoom+1 (4 أضعاف الطلبات) من غير أي زيادة في الوضوح = خريطة أبطأ.
   static bool retinaFor(BuildContext context) =>

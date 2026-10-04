@@ -38,6 +38,8 @@ class _WasalhaMapState extends State<WasalhaMap> {
   bool _ready = false;
   bool _userMoved = false;
   String? _fitKey;
+  int _tileErrors = 0;
+  bool _useFallbackTiles = false;
 
   // مفتاح الوجهة: بنعيد ضبط الكاميرا بس لما الوجهة تتغير، مش مع كل تحديث
   // لموقع الكابتن — عشان المستخدم يقدر يحرّك الخريطة بحرية.
@@ -118,10 +120,12 @@ class _WasalhaMapState extends State<WasalhaMap> {
   @override
   Widget build(BuildContext context) {
     return Stack(
+      fit: StackFit.expand,
       children: [
         FlutterMap(
           mapController: _controller,
           options: MapOptions(
+            backgroundColor: const Color(0xFFE9EEF1),
             initialCenter: widget.center,
             initialZoom: widget.zoom,
             minZoom: 5,
@@ -139,18 +143,36 @@ class _WasalhaMapState extends State<WasalhaMap> {
           ),
           children: [
             TileLayer(
-              urlTemplate: MapConfig.tileUrlTemplate,
-              subdomains: MapConfig.tileSubdomains,
+              key: ValueKey(_useFallbackTiles),
+              urlTemplate: _useFallbackTiles
+                  ? MapConfig.fallbackTileUrlTemplate
+                  : MapConfig.tileUrlTemplate,
+              subdomains:
+                  _useFallbackTiles ? const ['a'] : MapConfig.tileSubdomains,
               retinaMode: MapConfig.retinaFor(context),
               maxNativeZoom: 19,
               userAgentPackageName: MapConfig.userAgentPackageName,
+              evictErrorTileStrategy: EvictErrorTileStrategy.notVisible,
+              // لو التايلز الأساسية فشلت كذا مرة ورا بعض: نحوّل للاحتياطية.
+              errorTileCallback: (tile, error, stack) {
+                if (_useFallbackTiles) return;
+                if (++_tileErrors >= 6) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted && !_useFallbackTiles) {
+                      setState(() => _useFallbackTiles = true);
+                    }
+                  });
+                }
+              },
             ),
             if (widget.routeGeometry.length > 1)
               PolylineLayer(polylines: [
                 Polyline(
                   points: widget.routeGeometry,
-                  color: C.emerald500.withOpacity(0.6),
+                  color: C.emerald600.withOpacity(0.9),
                   strokeWidth: 6,
+                  borderColor: C.white,
+                  borderStrokeWidth: 2,
                 ),
               ]),
             MarkerLayer(markers: widget.markers, rotate: false),

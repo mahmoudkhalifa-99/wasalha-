@@ -245,10 +245,19 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
           }
           _lastRouteAt = now;
           final geo = await utils.getRouteGeometry(lat, lng, dest.lat, dest.lng);
-          if (mounted) {
-            setState(() => _routeGeometry =
-                geo.map((p) => ll.LatLng(p[0], p[1])).toList());
+          if (!mounted) return;
+          if (utils.isStraightFallback(geo)) {
+            // فشل السيرفر: منستبدلش طريق حقيقي قديم بخط مستقيم، ونعيد
+            // المحاولة مع أول تحديث لموقع الكابتن.
+            _lastRouteAt = null;
+            if (_routeGeometry.length <= 2) {
+              setState(() => _routeGeometry =
+                  geo.map((p) => ll.LatLng(p[0], p[1])).toList());
+            }
+            return;
           }
+          setState(() => _routeGeometry =
+              geo.map((p) => ll.LatLng(p[0], p[1])).toList());
         }
       }, onError: (e) => handleFirestoreError(
           e, OperationType.get, 'users/${order.driverId}'));

@@ -7,37 +7,63 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 
-/// جلب قائمة إحداثيات المسار الفعلي (Road Geometry) بين نقطتين عبر OSRM
-/// تُرجع قائمة [lat, lng].
+/// سيرفرات OSRM (من غير مفتاح). بنسأل الاتنين مع بعض وناخد أول رد سليم،
+/// لأن السيرفر العام الواحد بطيء/بيرفض أحيانًا فكان الخط بيرجع مستقيم.
+const List<String> _osrmBases = [
+  'https://router.project-osrm.org/route/v1/driving',
+  'https://routing.openstreetmap.de/routed-car/route/v1/driving',
+];
+
+Future<List<List<double>>?> _osrmGeometry(
+    String base, double lat1, double lon1, double lat2, double lon2) async {
+  try {
+    final url = Uri.parse(
+        '$base/$lon1,$lat1;$lon2,$lat2?overview=full&geometries=geojson');
+    final response = await http.get(url).timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) return null;
+    final data = jsonDecode(response.body);
+    if (data is Map &&
+        data['code'] == 'Ok' &&
+        (data['routes'] as List).isNotEmpty &&
+        data['routes'][0]['geometry']?['coordinates'] != null) {
+      final coords = data['routes'][0]['geometry']['coordinates'] as List;
+      final pts = coords
+          .map<List<double>>((c) =>
+              [(c[1] as num).toDouble(), (c[0] as num).toDouble()])
+          .toList();
+      return pts.length >= 2 ? pts : null;
+    }
+  } catch (_) {}
+  return null;
+}
+
+/// مسار السير على الطرق. لو كل السيرفرات فشلت بيرجع خط مستقيم من نقطتين
+/// (استخدم [isStraightFallback] عشان متستبدلش مسار حقيقي قديم بيه).
 Future<List<List<double>>> getRouteGeometry(
     double lat1, double lon1, double lat2, double lon2) async {
   if (lat1 == 0 || lon1 == 0 || lat2 == 0 || lon2 == 0) return [];
-  try {
-    final url = Uri.parse(
-        'https://router.project-osrm.org/route/v1/driving/$lon1,$lat1;$lon2,$lat2?overview=full&geometries=geojson');
-    final response =
-        await http.get(url).timeout(const Duration(milliseconds: 2500));
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      if (data is Map &&
-          data['code'] == 'Ok' &&
-          (data['routes'] as List).isNotEmpty &&
-          data['routes'][0]['geometry']?['coordinates'] != null) {
-        final coords = data['routes'][0]['geometry']['coordinates'] as List;
-        return coords
-            .map<List<double>>((c) =>
-                [(c[1] as num).toDouble(), (c[0] as num).toDouble()])
-            .toList();
+  final completer = Completer<List<List<double>>?>();
+  var pending = _osrmBases.length;
+  for (final b in _osrmBases) {
+    _osrmGeometry(b, lat1, lon1, lat2, lon2).then((r) {
+      if (completer.isCompleted) return;
+      if (r != null) {
+        completer.complete(r);
+      } else if (--pending == 0) {
+        completer.complete(null);
       }
-    }
-  } catch (_) {
-    // Fallback quietly to direct trajectory
+    });
   }
+  final res = await completer.future;
+  if (res != null) return res;
   return [
     [lat1, lon1],
     [lat2, lon2]
   ];
 }
+
+/// المسار اللي رجع هو الخط المستقيم الاحتياطي (مش طريق حقيقي).
+bool isStraightFallback(List<List<double>> g) => g.length <= 2;
 
 class RoadDistance {
   final double distance; // كم
