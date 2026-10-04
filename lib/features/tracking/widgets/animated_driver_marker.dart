@@ -17,10 +17,14 @@ class AnimatedDriverMarkerLayer extends StatefulWidget {
   const AnimatedDriverMarkerLayer({
     super.key,
     required this.fix,
+    this.dimmed = false,
     this.duration = const Duration(milliseconds: 900),
   });
 
   final GeoFix? fix;
+
+  /// true لما الموقع قديم/غير متاح: الماركر بيظهر رمادي بدل الأخضر.
+  final bool dimmed;
   final Duration duration;
 
   @override
@@ -121,7 +125,10 @@ class _AnimatedDriverMarkerLayerState extends State<AnimatedDriverMarkerLayer>
               point: _currentPoint(),
               width: 52,
               height: 52,
-              child: DriverMarkerIcon(bearingDegrees: _currentBearing()),
+              child: DriverMarkerIcon(
+                bearingDegrees: _currentBearing(),
+                dimmed: widget.dimmed,
+              ),
             ),
           ],
         );
@@ -130,46 +137,61 @@ class _AnimatedDriverMarkerLayerState extends State<AnimatedDriverMarkerLayer>
   }
 }
 
-/// أيقونة السائق: سهم ملاحة داخل دائرة، بيدور حسب الاتجاه.
+/// أيقونة السائق: سيارة داخل دائرة بيضا + مؤشر اتجاه (سهم صغير) بيدور حول
+/// الدائرة حسب الاتجاه. السيارة نفسها ثابتة عشان ما تتقلبش.
 class DriverMarkerIcon extends StatelessWidget {
-  const DriverMarkerIcon({super.key, required this.bearingDegrees});
+  const DriverMarkerIcon({
+    super.key,
+    required this.bearingDegrees,
+    this.dimmed = false,
+  });
   final double bearingDegrees;
+  final bool dimmed;
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        Container(
-          width: 52,
-          height: 52,
-          decoration: BoxDecoration(
-            color: C.emerald500.withAlpha(51),
-            shape: BoxShape.circle,
+    final color = dimmed ? C.slate500 : C.emerald600;
+    return SizedBox(
+      width: 52,
+      height: 52,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: color.withAlpha(46),
+              shape: BoxShape.circle,
+            ),
           ),
-        ),
-        Container(
-          width: 34,
-          height: 34,
-          decoration: BoxDecoration(
-            color: C.white,
-            shape: BoxShape.circle,
-            border: Border.all(color: C.emerald600, width: 2),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x40000000),
-                blurRadius: 10,
-                offset: Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Transform.rotate(
+          // مؤشر الاتجاه: بيدور حول مركز الماركر.
+          Transform.rotate(
             angle: bearingDegrees * math.pi / 180,
-            child: const Icon(Icons.navigation_rounded,
-                size: 20, color: C.emerald600),
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: Icon(Icons.arrow_drop_up_rounded, size: 28, color: color),
+            ),
           ),
-        ),
-      ],
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: C.white,
+              shape: BoxShape.circle,
+              border: Border.all(color: color, width: 2),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x40000000),
+                  blurRadius: 10,
+                  offset: Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Icon(Icons.directions_car_filled_rounded, size: 19, color: color),
+          ),
+        ],
+      ),
     );
   }
 }

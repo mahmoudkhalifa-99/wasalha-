@@ -37,17 +37,21 @@ double lerpBearing(double from, double to, double t) {
   return (from + delta * t) % 360;
 }
 
-/// أقل مسافة (بالمتر) بين نقطة وخط مكسور (Polyline).
-/// بنحوّل لإحداثيات محلية بالمتر (تقريب مناسب للمسافات القصيرة).
-double distanceToPolylineMeters(LatLng p, List<LatLng> line) {
-  if (line.isEmpty) return double.infinity;
-  if (line.length == 1) return distanceMeters(p, line.first);
+class _Nearest {
+  const _Nearest(this.segment, this.t, this.distance);
+  final int segment; // رقم المقطع (من line[segment] إلى line[segment+1])
+  final double t; // موضع الإسقاط على المقطع (0..1)
+  final double distance; // المسافة بالمتر
+}
 
+/// أقرب مقطع في الخط المكسور للنقطة [p]. بنحوّل لإحداثيات محلية بالمتر
+/// (تقريب مناسب للمسافات القصيرة). الخط لازم يكون فيه نقطتين على الأقل.
+_Nearest _nearestSegment(LatLng p, List<LatLng> line) {
   final cosLat = math.cos(_rad(p.latitude));
   double toX(LatLng q) => _rad(q.longitude - p.longitude) * _earthRadiusM * cosLat;
   double toY(LatLng q) => _rad(q.latitude - p.latitude) * _earthRadiusM;
 
-  var best = double.infinity;
+  var best = const _Nearest(0, 0, double.infinity);
   for (var i = 0; i < line.length - 1; i++) {
     final ax = toX(line[i]);
     final ay = toY(line[i]);
@@ -62,9 +66,33 @@ double distanceToPolylineMeters(LatLng p, List<LatLng> line) {
     final cx = ax + t * dx;
     final cy = ay + t * dy;
     final d = math.sqrt(cx * cx + cy * cy);
-    if (d < best) best = d;
+    if (d < best.distance) best = _Nearest(i, t, d);
   }
   return best;
+}
+
+/// أقل مسافة (بالمتر) بين نقطة وخط مكسور (Polyline).
+double distanceToPolylineMeters(LatLng p, List<LatLng> line) {
+  if (line.isEmpty) return double.infinity;
+  if (line.length == 1) return distanceMeters(p, line.first);
+  return _nearestSegment(p, line).distance;
+}
+
+/// نسبة المتبقي من المسار (1 = أوله، 0 = آخره) بعد إسقاط [p] على أقرب مقطع.
+/// بتستخدم لتحديث المسافة والوقت محليًا مع حركة السائق من غير Routing API.
+double remainingRouteFraction(LatLng p, List<LatLng> line) {
+  if (line.length < 2) return 1;
+  final lens = <double>[
+    for (var i = 0; i < line.length - 1; i++) distanceMeters(line[i], line[i + 1]),
+  ];
+  final total = lens.fold<double>(0, (a, b) => a + b);
+  if (total <= 0) return 0;
+  final n = _nearestSegment(p, line);
+  var remaining = (1 - n.t) * lens[n.segment];
+  for (var j = n.segment + 1; j < lens.length; j++) {
+    remaining += lens[j];
+  }
+  return (remaining / total).clamp(0.0, 1.0);
 }
 
 /// تنسيق المسافة بالعربي: "350 م" أو "2.4 كم".
@@ -81,4 +109,24 @@ String formatEta(double seconds) {
   final h = minutes ~/ 60;
   final m = minutes % 60;
   return m == 0 ? '$h س' : '$h س $m د';
+}
+
+String _arUnit(int n, String one, String two, String few) {
+  if (n == 1) return one;
+  if (n == 2) return two;
+  if (n <= 10) return '$n $few';
+  return '$n $one';
+}
+
+/// "آخر تحديث الآن" / "آخر تحديث منذ 25 ثانية" / "آخر تحديث منذ دقيقتين".
+String formatLastUpdate(Duration age) {
+  final s = age.inSeconds < 0 ? 0 : age.inSeconds;
+  if (s < 5) return 'آخر تحديث الآن';
+  if (s < 60) return 'آخر تحديث منذ ${_arUnit(s, 'ثانية', 'ثانيتين', 'ثواني')}';
+  final m = s ~/ 60;
+  if (m < 60) return 'آخر تحديث منذ ${_arUnit(m, 'دقيقة', 'دقيقتين', 'دقائق')}';
+  final h = m ~/ 60;
+  if (h < 24) return 'آخر تحديث منذ ${_arUnit(h, 'ساعة', 'ساعتين', 'ساعات')}';
+  final d = h ~/ 24;
+  return 'آخر تحديث منذ ${_arUnit(d, 'يوم', 'يومين', 'أيام')}';
 }

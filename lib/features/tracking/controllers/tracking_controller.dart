@@ -22,20 +22,30 @@ class TrackingController {
     required this.routing,
     this.driverSource,
     this.publisher,
-    this.customerLocation,
+    LatLng? customerLocation,
+    this.config = const TrackingConfig(),
     this.minRouteInterval = const Duration(seconds: 10),
     this.rerouteDistanceMeters = 75,
     this.offRouteMeters = 60,
+    this.maxRouteAge = const Duration(minutes: 3),
+    this.staleRouteMinMoveMeters = 20,
     this.tick = const Duration(seconds: 10),
     this.retryBackoffBase = const Duration(seconds: 10),
     DateTime Function()? clock,
-  }) : _clock = clock ?? DateTime.now;
+  })  : _clock = clock ?? DateTime.now,
+        destination = ValueNotifier<LatLng?>(customerLocation);
 
   final LocationService location;
   final RoutingService routing;
   final DriverLocationSource? driverSource;
   final DriverLocationPublisher? publisher;
-  final LatLng? customerLocation;
+
+  /// عتبات التتبع (دقة GPS، حداثة الموقع، debounce الاختيار…).
+  final TrackingConfig config;
+
+  /// الوجهة الحالية (موقع العميل أو الموقع المعتمد من الخريطة).
+  final ValueNotifier<LatLng?> destination;
+  LatLng? get customerLocation => destination.value;
 
   /// أقل فاصل بين طلبين لـ Routing API.
   final Duration minRouteInterval;
@@ -45,6 +55,11 @@ class TrackingController {
 
   /// أو لما يبعد عن خط المسار بالمسافة دي.
   final double offRouteMeters;
+
+  /// المسار الأقدم من كده بيتعاد حسابه (لو السائق اتحرك [staleRouteMinMoveMeters]
+  /// على الأقل — السائق الواقف مبيستهلكش طلبات).
+  final Duration maxRouteAge;
+  final double staleRouteMinMoveMeters;
 
   /// فاصل مؤقّت المحاولات (إعادة المحاولة بعد فشل / إعادة الاشتراك).
   final Duration tick;
@@ -73,6 +88,21 @@ class TrackingController {
   final ValueNotifier<bool> routeUnavailable = ValueNotifier<bool>(false);
   final ValueNotifier<bool> routeLoading = ValueNotifier<bool>(false);
 
+  /// حداثة موقع السائق: LIVE / STALE / WAITING / UNAVAILABLE.
+  final ValueNotifier<Freshness> freshness =
+      ValueNotifier<Freshness>(Freshness.waiting);
+
+  /// المسافة/الوقت المتبقيين، بيتحدثوا محليًا مع حركة السائق.
+  final ValueNotifier<RouteProgress?> progress =
+      ValueNotifier<RouteProgress?>(null);
+
+  /// true لما آخر نقطة GPS دقتها أسوأ من الحد المسموح (بنحتفظ بآخر نقطة صالحة).
+  final ValueNotifier<bool> gpsAccuracyLow = ValueNotifier<bool>(false);
+
+  /// أوامر الكاميرا (بينفّذها الـ Widget بـ MapController).
+  final ValueNotifier<CameraCommand?> camera =
+      ValueNotifier<CameraCommand?>(null);
+
   // ---------------- داخلي ----------------
   StreamSubscription<GeoFix>? _posSub;
   StreamSubscription<GeoFix>? _driverSub;
@@ -91,12 +121,16 @@ class TrackingController {
   int _driverFailures = 0;
   DateTime? _driverRetryAt;
   DateTime? _lastRequestAt;
+  DateTime? _routeComputedAt;
   LatLng? _routeOrigin;
+  int _cameraSeq = 0;
+  bool _userControlsCamera = false;
+  bool _autoCameraDone = false;
 
   /// مسافة خط مستقيم بين السائق والعميل (للعرض التقريبي لو المسار مش متاح).
   double? get straightDistanceMeters {
     final d = driver.value?.position;
-    final c = customerLocation;
+    final c = destination.value;
     if (d == null || c == null) return null;
     return distanceMeters(d, c);
   }
@@ -109,6 +143,7 @@ class TrackingController {
       status.value = TrackingStatus.waitingForDriver;
       _listenDriver();
     }
+    _refreshFreshness();
     await _startLocation();
   }
 
@@ -123,11 +158,9 @@ class TrackingController {
     }
     if (_disposed) return null;
     if (me.value == null) {
-      final cur = await location.currentLatLng();
+      final cur = await location.currentFix();
       if (_disposed) return null;
-      if (cur != null) {
-        _applyMyFix(GeoFix(position: cur, updatedAt: _clock()), publish: false);
-      }
+      if (cur != null) _applyMyFix(cur, publish: false);
     }
     return me.value;
   }
@@ -149,7 +182,7 @@ class TrackingController {
     try {
       final issue = await location.ensureReady();
       if (_disposed) return;
-      locationIssue.value = issue;
+      _setIssue(issue);
       if (issue != null) {
         await _posSub?.cancel();
         _posSub = null;
@@ -169,31 +202,51 @@ class TrackingController {
           debugPrint('location stream error: $e');
           if (_disposed) return;
           _posDead = true; // cancelOnError: الاشتراك اتقفل — الـ tick يعيده
-          locationIssue.value =
-              e is LocationIssueException ? e.issue : LocationIssue.unavailable;
+          _setIssue(
+              e is LocationIssueException ? e.issue : LocationIssue.unavailable);
           if (isDriverMode) status.value = TrackingStatus.locationBlocked;
         },
         cancelOnError: true,
       );
       _posDead = false;
-      final cur = await location.currentLatLng();
+      final cur = await location.currentFix();
       if (_disposed) return;
       if (cur != null && me.value == null) {
         // أول نقطة للعرض بس: ممكن تكون last-known قديمة، فما بنبثهاش لـ Firestore.
-        _applyMyFix(GeoFix(position: cur, updatedAt: _clock()), publish: false);
+        _applyMyFix(cur, publish: false);
       }
     } finally {
       _locationStarting = false;
     }
   }
 
+  bool _isAccurate(GeoFix f) {
+    final a = f.accuracy;
+    return a == null || a <= config.maxAcceptedAccuracyMeters;
+  }
+
+  void _setIssue(LocationIssue? issue) {
+    if (_disposed) return;
+    locationIssue.value = issue;
+    _refreshFreshness();
+  }
+
   void _applyMyFix(GeoFix f, {bool publish = true}) {
     if (_disposed) return;
+    // وصول نقطة = الـ GPS شغال، حتى لو دقتها ضعيفة.
+    if (locationIssue.value != null) _setIssue(null);
+    if (!_isAccurate(f)) {
+      // نتجاهلها في الموقع/المسار/البث ونحتفظ بآخر نقطة صالحة (التتبع مبيقفش).
+      if (!gpsAccuracyLow.value) gpsAccuracyLow.value = true;
+      return;
+    }
+    if (gpsAccuracyLow.value) gpsAccuracyLow.value = false;
     me.value = f.position;
-    if (locationIssue.value != null) locationIssue.value = null;
     if (isDriverMode) {
       _onDriverFix(f);
       if (publish) publisher?.publish(f);
+    } else {
+      _autoCamera(); // وضع العميل بدون وجهة: نركّز على موقعي مرة واحدة
     }
   }
 
@@ -210,6 +263,7 @@ class TrackingController {
         _driverFailures++;
         _driverRetryAt = _clock().add(_backoff(_driverFailures));
         _driverNeedsResubscribe = true; // هنعيد الاشتراك في أول tick بعد الـ backoff
+        _refreshFreshness();
       },
       cancelOnError: true,
     );
@@ -231,15 +285,51 @@ class TrackingController {
       position: f.position,
       updatedAt: f.updatedAt,
       bearing: bearing,
+      accuracy: f.accuracy,
     );
     status.value = TrackingStatus.live;
+    _refreshFreshness();
+    _autoCamera();
     _maybeReroute();
+    _updateProgress();
+  }
+
+  /// يحدّث [freshness] من عمر آخر نقطة (بيتنادى مع كل نقطة ومع كل tick).
+  void _refreshFreshness() {
+    if (_disposed) return;
+    final f = computeFreshness(
+      fix: driver.value,
+      now: _clock(),
+      config: config,
+      sourceFailed:
+          _driverFailures > 0 || (isDriverMode && locationIssue.value != null),
+    );
+    if (f != freshness.value) freshness.value = f;
+  }
+
+  /// المسافة/الوقت المتبقيين من المسار الحالي، من غير Routing API.
+  void _updateProgress() {
+    if (_disposed) return;
+    final r = route.value;
+    final d = driver.value;
+    if (r == null) {
+      if (progress.value != null) progress.value = null;
+      return;
+    }
+    final frac = (d == null || r.points.length < 2)
+        ? 1.0
+        : remainingRouteFraction(d.position, r.points);
+    progress.value = RouteProgress(
+      distanceMeters: r.distanceMeters * frac,
+      durationSeconds: r.durationSeconds * frac,
+    );
   }
 
   // ---------------- المسار ----------------
   void _onTick() {
     if (_disposed) return;
     final now = _clock();
+    _refreshFreshness();
     if (_driverNeedsResubscribe) {
       final at = _driverRetryAt;
       if (at == null || !now.isBefore(at)) _listenDriver();
@@ -264,18 +354,22 @@ class TrackingController {
   void _maybeReroute({bool force = false}) {
     if (_disposed) return;
     final d = driver.value;
-    final dest = customerLocation;
+    final dest = destination.value;
     if (d == null || dest == null) return;
 
     final current = route.value;
     var need = force || current == null;
     if (!need) {
       final origin = _routeOrigin;
-      final moved = origin == null ||
-          distanceMeters(origin, d.position) >= rerouteDistanceMeters;
+      final moved =
+          origin == null ? double.infinity : distanceMeters(origin, d.position);
       final off =
           distanceToPolylineMeters(d.position, current!.points) > offRouteMeters;
-      need = moved || off;
+      final at = _routeComputedAt;
+      final aged = at != null &&
+          _clock().difference(at) >= maxRouteAge &&
+          moved >= staleRouteMinMoveMeters;
+      need = moved >= rerouteDistanceMeters || off || aged;
     }
     if (!need || _inFlight) return;
     final retryAt = _routeRetryAt;
@@ -301,40 +395,160 @@ class TrackingController {
     _lastRequestAt = _clock();
     routeLoading.value = true;
     var succeeded = false;
+    var discarded = false;
     try {
       final res = await routing.getRoute(start: from, destination: to);
       if (_disposed) return;
-      _routeOrigin = from;
-      route.value = res;
-      networkOk.value = true;
-      routeUnavailable.value = false;
-      _routeFailed = false;
-      _routeFailures = 0;
-      _routeRetryAt = null;
-      succeeded = true;
+      if (destination.value != to) {
+        // الوجهة اتغيّرت أثناء الانتظار: الرد ده لمسار قديم — نتجاهله.
+        discarded = true;
+      } else {
+        _routeOrigin = from;
+        _routeComputedAt = _clock();
+        route.value = res;
+        networkOk.value = true;
+        routeUnavailable.value = false;
+        _routeFailed = false;
+        _routeFailures = 0;
+        _routeRetryAt = null;
+        succeeded = true;
+        _updateProgress();
+      }
     } on RoutingException catch (e) {
       debugPrint('routing failed: $e');
       if (_disposed) return;
-      if (e.isConnectivity) networkOk.value = false;
-      routeUnavailable.value = true; // آخر مسار معروف يفضل معروض
-      _routeFailed = true;
-      _routeFailures++;
-      _routeRetryAt = _clock().add(_backoff(_routeFailures,
-          extra: e.kind == RoutingFailure.rateLimited ? 1 : 0));
+      if (destination.value != to) {
+        discarded = true;
+      } else {
+        if (e.isConnectivity) networkOk.value = false;
+        routeUnavailable.value = true; // آخر مسار معروف يفضل معروض
+        _routeFailed = true;
+        _routeFailures++;
+        _routeRetryAt = _clock().add(_backoff(_routeFailures,
+            extra: e.kind == RoutingFailure.rateLimited ? 1 : 0));
+      }
     } catch (e) {
       debugPrint('routing unexpected error: $e');
       if (_disposed) return;
-      routeUnavailable.value = true;
-      _routeFailed = true;
-      _routeFailures++;
-      _routeRetryAt = _clock().add(_backoff(_routeFailures));
+      if (destination.value != to) {
+        discarded = true;
+      } else {
+        routeUnavailable.value = true;
+        _routeFailed = true;
+        _routeFailures++;
+        _routeRetryAt = _clock().add(_backoff(_routeFailures));
+      }
     } finally {
       _inFlight = false;
       if (!_disposed) routeLoading.value = false;
     }
+    if (_disposed) return;
+    // الوجهة اتغيّرت: نطلب مسار الوجهة الجديدة فورًا.
+    if (discarded) {
+      _maybeReroute(force: true);
+      return;
+    }
     // السائق ممكن يكون اتحرك أثناء انتظار الرد: الرد اتحسب من نقطة قديمة.
     // نفحص تاني بعد ما _inFlight اتقفل (الـ throttle بيحكم التوقيت).
-    if (succeeded && !_disposed) _maybeReroute();
+    if (succeeded) _maybeReroute();
+  }
+
+  /// يعتمد وجهة جديدة (أو null لإزالتها). ده الوقت الوحيد اللي اختيار موقع
+  /// جديد بيتحوّل فيه لطلب Routing.
+  void setDestination(LatLng? p, {bool moveCamera = true}) {
+    if (_disposed) return;
+    destination.value = p;
+    route.value = null;
+    progress.value = null;
+    _routeOrigin = null;
+    _routeComputedAt = null;
+    _routeFailed = false;
+    _routeFailures = 0;
+    _routeRetryAt = null;
+    _lastRequestAt = null;
+    _pendingTimer?.cancel();
+    _pendingTimer = null;
+    routeUnavailable.value = false;
+    if (moveCamera) fitAll(); // المستخدم هو اللي غيّر الوجهة: تحريك الكاميرا مقصود
+    _maybeReroute(force: true);
+  }
+
+  // ---------------- الكاميرا (أوامر فقط — التنفيذ في الـ Widget) ----------------
+  /// الـ Widget بينادي عليها لما المستخدم يحرّك الخريطة بإيده. من بعدها ما فيش
+  /// تحريك أوتوماتيك للكاميرا.
+  void userMovedCamera() => _userControlsCamera = true;
+  bool get userControlsCamera => _userControlsCamera;
+
+  void _emit(CameraCommandType type,
+      {List<LatLng> points = const [], LatLng? target, double? zoom}) {
+    if (_disposed) return;
+    camera.value = CameraCommand(
+      id: ++_cameraSeq,
+      type: type,
+      points: points,
+      target: target,
+      zoom: zoom,
+    );
+  }
+
+  /// ضبط الكاميرا أوتوماتيك مرة واحدة فقط، ومش بعد ما المستخدم يمسك الخريطة.
+  void _autoCamera() {
+    if (_userControlsCamera || _autoCameraDone) return;
+    final d = driver.value?.position;
+    final cu = destination.value;
+    final m = me.value;
+    if (d != null && cu != null) {
+      _emit(CameraCommandType.fitBounds, points: [d, cu]);
+      _autoCameraDone = true;
+    } else if (cu == null && d != null) {
+      _emit(CameraCommandType.centerOnDriver, target: d, zoom: config.focusZoom);
+      _autoCameraDone = true;
+    } else if (cu == null && m != null) {
+      _emit(CameraCommandType.centerOnMe, target: m, zoom: config.focusZoom);
+      _autoCameraDone = true;
+    }
+  }
+
+  /// "عرض الطريق كاملًا": السائق + الوجهة (+ موقعي لو ناقص).
+  void fitAll() {
+    final pts = <LatLng>[];
+    void add(LatLng? p) {
+      if (p != null && !pts.contains(p)) pts.add(p);
+    }
+
+    add(driver.value?.position);
+    add(destination.value);
+    if (pts.length < 2) add(me.value);
+    if (pts.length >= 2) {
+      _emit(CameraCommandType.fitBounds, points: pts);
+    } else if (pts.length == 1) {
+      final p = pts.first;
+      final type = driver.value?.position == p
+          ? CameraCommandType.centerOnDriver
+          : (destination.value == p
+              ? CameraCommandType.centerOnSelectedLocation
+              : CameraCommandType.centerOnMe);
+      _emit(type, target: p, zoom: config.focusZoom);
+    }
+  }
+
+  /// زر "موقعي": GPS الحالي ثم تركيز الكاميرا (على السائق في وضع السائق).
+  Future<void> focusMyLocation() async {
+    final p = await locateMe();
+    if (_disposed || p == null) return;
+    _emit(
+      isDriverMode ? CameraCommandType.centerOnDriver : CameraCommandType.centerOnMe,
+      target: p,
+      zoom: config.focusZoom,
+    );
+  }
+
+  /// تركيز على الوجهة/الموقع المحدد.
+  void focusDestination() {
+    final p = destination.value;
+    if (p == null) return;
+    _emit(CameraCommandType.centerOnSelectedLocation,
+        target: p, zoom: config.focusZoom);
   }
 
   // ---------------- التنظيف ----------------
@@ -358,5 +572,10 @@ class TrackingController {
     networkOk.dispose();
     routeUnavailable.dispose();
     routeLoading.dispose();
+    destination.dispose();
+    freshness.dispose();
+    progress.dispose();
+    gpsAccuracyLow.dispose();
+    camera.dispose();
   }
 }

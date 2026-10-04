@@ -20,6 +20,9 @@ abstract class LocationService {
   /// الموقع الحالي لمرة واحدة، أو null لو مش متاح.
   Future<LatLng?> currentLatLng();
 
+  /// نفس [currentLatLng] لكن مع الدقة ووقت النقطة (عشان فلتر الدقة وحالة STALE).
+  Future<GeoFix?> currentFix();
+
   /// بث تحديثات الموقع. اشتراك واحد فقط لكل Controller.
   Stream<GeoFix> watch({int distanceFilter = 5});
 
@@ -74,6 +77,35 @@ class GeolocatorLocationService implements LocationService {
   }
 
   @override
+  Future<GeoFix?> currentFix() async {
+    try {
+      final p = await Geolocator.getCurrentPosition(
+        // ignore: deprecated_member_use
+        desiredAccuracy: LocationAccuracy.high,
+        // ignore: deprecated_member_use
+        timeLimit: const Duration(seconds: 12),
+      );
+      return _toFix(p, useDeviceTimestamp: false);
+    } catch (_) {
+      try {
+        final last = await Geolocator.getLastKnownPosition();
+        // آخر موقع معروف ممكن يكون قديم: بنحتفظ بوقته الحقيقي عشان يظهر STALE.
+        if (last != null) return _toFix(last, useDeviceTimestamp: true);
+      } catch (_) {}
+      return null;
+    }
+  }
+
+  GeoFix _toFix(Position p, {required bool useDeviceTimestamp}) {
+    final DateTime? ts = p.timestamp;
+    return GeoFix(
+      position: LatLng(p.latitude, p.longitude),
+      updatedAt: useDeviceTimestamp ? (ts ?? DateTime.now()) : DateTime.now(),
+      accuracy: p.accuracy,
+    );
+  }
+
+  @override
   Stream<GeoFix> watch({int distanceFilter = 5}) async* {
     try {
       await for (final p in Geolocator.getPositionStream(
@@ -87,6 +119,7 @@ class GeolocatorLocationService implements LocationService {
           updatedAt: DateTime.now(),
           // الاتجاه بيبقى غير موثوق لما الجهاز واقف.
           bearing: p.speed > 1.0 && p.heading >= 0 ? p.heading : null,
+          accuracy: p.accuracy,
         );
       }
     } on LocationServiceDisabledException {

@@ -12,6 +12,7 @@ class FakeLocation implements LocationService {
   FakeLocation({this.issue});
   LocationIssue? issue;
   LatLng? current = const LatLng(30.55, 31.0);
+  double? currentAccuracy;
   final StreamController<GeoFix> ctrl = StreamController<GeoFix>.broadcast();
   int watchCalls = 0;
 
@@ -20,6 +21,15 @@ class FakeLocation implements LocationService {
 
   @override
   Future<LatLng?> currentLatLng() async => current;
+
+  @override
+  Future<GeoFix?> currentFix() async => current == null
+      ? null
+      : GeoFix(
+          position: current!,
+          updatedAt: DateTime.now(),
+          accuracy: currentAccuracy,
+        );
 
   @override
   Stream<GeoFix> watch({int distanceFilter = 5}) {
@@ -80,8 +90,11 @@ RouteResult _route() => RouteResult(
       durationSeconds: 120,
     );
 
-GeoFix fix(double lat, double lng) =>
-    GeoFix(position: LatLng(lat, lng), updatedAt: DateTime.now());
+GeoFix fix(double lat, double lng, {double? accuracy}) => GeoFix(
+      position: LatLng(lat, lng),
+      updatedAt: DateTime.now(),
+      accuracy: accuracy,
+    );
 
 Future<void> pump() => Future<void>.delayed(const Duration(milliseconds: 20));
 
@@ -290,5 +303,336 @@ void main() {
     expect(loc.watchCalls, 0);
     expect(b.locationIssue.value, LocationIssue.denied);
     b.dispose();
+  });
+
+  // ======================= فلتر دقة GPS =======================
+  group('GPS accuracy', () {
+    test('نقطة دقتها سيئة: بتتجاهل، التتبع مبيقفش، والنقطة الصالحة بتتقبل',
+        () async {
+      location.current = null; // مفيش أول نقطة، عشان نلاحظ الفلتر بوضوح
+      await c.start();
+      expect(c.me.value, isNull);
+
+      location.ctrl.add(fix(30.5, 31.0, accuracy: 120)); // أسوأ من 50 م
+      await pump();
+      expect(c.me.value, isNull);
+      expect(c.gpsAccuracyLow.value, isTrue);
+      expect(c.locationIssue.value, isNull); // GPS شغال، بس الدقة ضعيفة
+      expect(location.ctrl.hasListener, isTrue); // الاشتراك لسه شغال
+
+      location.ctrl.add(fix(30.51, 31.01, accuracy: 10));
+      await pump();
+      expect(c.me.value, const LatLng(30.51, 31.01));
+      expect(c.gpsAccuracyLow.value, isFalse);
+
+      // نقطة سيئة بعد صالحة: نحتفظ بآخر صالحة.
+      location.ctrl.add(fix(30.9, 31.9, accuracy: 300));
+      await pump();
+      expect(c.me.value, const LatLng(30.51, 31.01));
+      expect(c.gpsAccuracyLow.value, isTrue);
+    });
+
+    test('الحد قابل للضبط (TrackingConfig.maxAcceptedAccuracyMeters)', () async {
+      final b = TrackingController(
+        location: location,
+        routing: routing,
+        customerLocation: _customer,
+        config: const TrackingConfig(maxAcceptedAccuracyMeters: 200),
+      );
+      location.current = null;
+      await b.start();
+      location.ctrl.add(fix(30.5, 31.0, accuracy: 120)); // مقبولة بحد 200
+      await pump();
+      expect(b.me.value, const LatLng(30.5, 31.0));
+      b.dispose();
+    });
+
+    test('وضع السائق: نقطة سيئة مبتدخلش في الموقع ولا طلب Routing', () async {
+      location.current = null;
+      final b = TrackingController(
+        location: location,
+        routing: routing,
+        customerLocation: _customer, // driverSource == null → وضع السائق
+        minRouteInterval: Duration.zero,
+      );
+      await b.start();
+      location.ctrl.add(fix(30.55, 31.0, accuracy: 500));
+      await pump();
+      expect(b.driver.value, isNull);
+      expect(routing.calls, 0);
+
+      location.ctrl.add(fix(30.55, 31.0, accuracy: 8));
+      await pump();
+      expect(b.driver.value, isNotNull);
+      expect(routing.calls, 1);
+      b.dispose();
+    });
+
+    test('أول نقطة (last-known) دقتها سيئة: متتقبلش', () async {
+      location.currentAccuracy = 900;
+      await c.start();
+      expect(c.me.value, isNull);
+      expect(c.gpsAccuracyLow.value, isTrue);
+    });
+  });
+
+  // ======================= حداثة الموقع =======================
+  group('Freshness', () {
+    test('LIVE ثم STALE ثم UNAVAILABLE حسب عمر آخر نقطة', () async {
+      var now = DateTime(2026, 1, 1, 12);
+      final b = TrackingController(
+        location: location,
+        routing: routing,
+        driverSource: source,
+        customerLocation: _customer,
+        minRouteInterval: Duration.zero,
+        tick: const Duration(milliseconds: 20),
+        clock: () => now,
+      );
+      await b.start();
+      expect(b.freshness.value, Freshness.waiting);
+
+      source.ctrl.add(GeoFix(position: const LatLng(30.55, 31.0), updatedAt: now));
+      await pump();
+      expect(b.freshness.value, Freshness.live);
+
+      now = now.add(const Duration(seconds: 31));
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(b.freshness.value, Freshness.stale);
+
+      now = now.add(const Duration(minutes: 11));
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(b.freshness.value, Freshness.unavailable);
+
+      // نقطة جديدة ترجّعه LIVE.
+      source.ctrl.add(GeoFix(position: const LatLng(30.551, 31.0), updatedAt: now));
+      await pump();
+      expect(b.freshness.value, Freshness.live);
+      b.dispose();
+    });
+
+    test('فشل مصدر السائق من غير أي نقطة = UNAVAILABLE', () async {
+      await c.start();
+      expect(c.freshness.value, Freshness.waiting);
+      source.ctrl.addError(Exception('permission-denied'));
+      await pump();
+      expect(c.freshness.value, Freshness.unavailable);
+    });
+  });
+
+  // ======================= الكاميرا =======================
+  group('Camera commands', () {
+    test('fitBounds مرة واحدة فقط عند أول سائق + عميل', () async {
+      await c.start();
+      expect(c.camera.value, isNull);
+      source.ctrl.add(fix(30.55, 31.0));
+      await pump();
+      final first = c.camera.value!;
+      expect(first.type, CameraCommandType.fitBounds);
+      expect(first.points, [const LatLng(30.55, 31.0), _customer]);
+
+      source.ctrl.add(fix(30.552, 31.002));
+      await pump();
+      expect(c.camera.value!.id, first.id); // مفيش تحريك مع كل GPS
+    });
+
+    test('بعد ما المستخدم يحرّك الخريطة: مفيش تحريك أوتوماتيك', () async {
+      await c.start();
+      c.userMovedCamera();
+      source.ctrl.add(fix(30.55, 31.0));
+      await pump();
+      expect(c.camera.value, isNull);
+      expect(c.userControlsCamera, isTrue);
+    });
+
+    test('زر موقعي (وضع العميل): centerOnMe على موقعي الحالي', () async {
+      await c.start();
+      await c.focusMyLocation();
+      final cmd = c.camera.value!;
+      expect(cmd.type, CameraCommandType.centerOnMe);
+      expect(cmd.target, const LatLng(30.55, 31.0));
+      expect(cmd.zoom, c.config.focusZoom);
+    });
+
+    test('زر موقعي يشتغل حتى بعد ما المستخدم حرّك الخريطة', () async {
+      await c.start();
+      c.userMovedCamera();
+      await c.focusMyLocation();
+      expect(c.camera.value?.type, CameraCommandType.centerOnMe);
+    });
+
+    test('زر موقعي (وضع السائق): centerOnDriver', () async {
+      final b = TrackingController(
+        location: location,
+        routing: routing,
+        customerLocation: _customer,
+      );
+      await b.start();
+      await b.focusMyLocation();
+      expect(b.camera.value!.type, CameraCommandType.centerOnDriver);
+      b.dispose();
+    });
+
+    test('fitAll: نقاط مميزة، ولو نقطة واحدة بس = تركيز عليها', () async {
+      await c.start();
+      // مفيش سائق: الوجهة + موقعي.
+      c.fitAll();
+      expect(c.camera.value!.type, CameraCommandType.fitBounds);
+      expect(c.camera.value!.points.length, 2);
+
+      // وضع السائق بدون وجهة: السائق = موقعي → نقطة واحدة بعد إزالة التكرار.
+      final b = TrackingController(location: location, routing: routing);
+      await b.start();
+      b.fitAll();
+      expect(b.camera.value!.type, CameraCommandType.centerOnDriver);
+      b.dispose();
+    });
+
+    test('بدون وجهة: التركيز على موقعي مرة واحدة تلقائيًا', () async {
+      final b = TrackingController(
+        location: location,
+        routing: routing,
+        driverSource: source,
+      );
+      await b.start();
+      final cmd = b.camera.value!;
+      expect(cmd.type, CameraCommandType.centerOnMe);
+      b.dispose();
+    });
+  });
+
+  // ======================= تغيير الوجهة =======================
+  group('Destination', () {
+    test('setDestination: مسار الوجهة القديمة بيتجاهل والجديدة بتتطلب', () async {
+      final g = GatedRouting();
+      final b = TrackingController(
+        location: location,
+        routing: g,
+        driverSource: source,
+        customerLocation: _customer,
+        minRouteInterval: Duration.zero,
+      );
+      await b.start();
+      source.ctrl.add(fix(30.55, 31.0));
+      await pump();
+      expect(g.calls, 1);
+
+      const newDest = LatLng(30.58, 31.03);
+      b.setDestination(newDest);
+      await pump();
+      expect(g.calls, 1); // الأول لسه معلّق (طلب واحد في الجو)
+
+      g.pending[0].complete(_route()); // رد الوجهة القديمة
+      await pump();
+      expect(b.route.value, isNull); // اتجاهل
+      expect(g.calls, 2); // واتطلب مسار الجديدة فورًا
+
+      g.pending[1].complete(_route());
+      await pump();
+      expect(b.route.value, isNotNull);
+      expect(b.destination.value, newDest);
+      b.dispose();
+    });
+
+    test('setDestination: بيمسح المسار وبيصدر fitBounds', () async {
+      await c.start();
+      source.ctrl.add(fix(30.55, 31.0));
+      await pump();
+      expect(c.route.value, isNotNull);
+      final before = c.camera.value!.id;
+
+      c.setDestination(const LatLng(30.6, 31.1));
+      expect(c.route.value, isNull);
+      expect(c.progress.value, isNull);
+      expect(c.camera.value!.id, greaterThan(before));
+      expect(c.camera.value!.type, CameraCommandType.fitBounds);
+      await pump();
+      expect(c.route.value, isNotNull); // اتحسب للوجهة الجديدة
+    });
+
+    test('moveCamera:false مبيحرّكش الكاميرا', () async {
+      await c.start();
+      source.ctrl.add(fix(30.55, 31.0));
+      await pump();
+      final before = c.camera.value!.id;
+      c.setDestination(const LatLng(30.6, 31.1), moveCamera: false);
+      expect(c.camera.value!.id, before);
+    });
+  });
+
+  // ======================= المسافة والوقت المتبقيين =======================
+  group('Route progress', () {
+    test('بيتحدث محليًا مع حركة السائق من غير Routing جديد', () async {
+      final b = TrackingController(
+        location: location,
+        routing: routing,
+        driverSource: source,
+        customerLocation: _customer,
+        minRouteInterval: Duration.zero,
+        rerouteDistanceMeters: 1e9,
+        offRouteMeters: 1e9,
+      );
+      await b.start();
+      source.ctrl.add(fix(30.55, 31.0));
+      await pump();
+      expect(routing.calls, 1);
+      expect(b.progress.value!.distanceMeters, closeTo(1000, 1));
+      expect(b.progress.value!.durationSeconds, closeTo(120, 0.5));
+
+      source.ctrl.add(fix(30.555, 31.005)); // منتصف المسار
+      await pump();
+      expect(routing.calls, 1);
+      expect(b.progress.value!.distanceMeters, closeTo(500, 15));
+      expect(b.progress.value!.durationSeconds, closeTo(60, 2));
+
+      source.ctrl.add(fix(30.56, 31.01)); // وصل
+      await pump();
+      expect(b.progress.value!.distanceMeters, closeTo(0, 5));
+      b.dispose();
+    });
+
+    test('مسار قديم (maxRouteAge): بيتعاد حسابه بس لو السائق اتحرك', () async {
+      var now = DateTime(2026, 1, 1, 12);
+      final b = TrackingController(
+        location: location,
+        routing: routing,
+        driverSource: source,
+        customerLocation: _customer,
+        minRouteInterval: Duration.zero,
+        rerouteDistanceMeters: 1e9,
+        offRouteMeters: 1e9,
+        maxRouteAge: const Duration(minutes: 3),
+        staleRouteMinMoveMeters: 20,
+        clock: () => now,
+      );
+      await b.start();
+      source.ctrl.add(fix(30.55, 31.0));
+      await pump();
+      expect(routing.calls, 1);
+
+      now = now.add(const Duration(minutes: 4));
+      source.ctrl.add(fix(30.55, 31.0)); // واقف في مكانه: مفيش سبب
+      await pump();
+      expect(routing.calls, 1);
+
+      source.ctrl.add(fix(30.5503, 31.0)); // اتحرك ~33 م والمسار قديم
+      await pump();
+      expect(routing.calls, 2);
+      b.dispose();
+    });
+  });
+
+  test('نقطة مكررة (نفس الموقع): مفيش Routing جديد ولا أمر كاميرا جديد', () async {
+    await c.start();
+    source.ctrl.add(fix(30.55, 31.0));
+    await pump();
+    final cam = c.camera.value!.id;
+    expect(routing.calls, 1);
+    for (var i = 0; i < 5; i++) {
+      source.ctrl.add(fix(30.55, 31.0));
+    }
+    await pump();
+    expect(routing.calls, 1);
+    expect(c.camera.value!.id, cam);
   });
 }

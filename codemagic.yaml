@@ -15,7 +15,7 @@ workflows:
     environment:
       flutter: stable
       groups:
-        - Wasalha
+        - wasalah_env
       vars:
         PACKAGE_NAME: "com.wasalah.app"
     scripts:
@@ -151,6 +151,25 @@ workflows:
 
       - name: تثبيت الباكدجات
         script: flutter pub get
+
+      # ===================== مراحل التحقق (قبل أي Release) =====================
+      # كل مرحلة أمر واحد: أي exit code غير صفري = الـ workflow يفشل ومبينتقلش
+      # لأي مرحلة بعدها (لا لـ Release APK ولا App Bundle).
+      # ملحوظة: `flutter analyze` بيفشل حتى على مستوى info (مثلًا deprecated_member_use).
+      # لو احتجت تخفّف الشرط ده لاحقًا: `flutter analyze --no-fatal-infos`.
+      - name: تحليل الكود (flutter analyze)
+        script: flutter analyze
+
+      - name: تشغيل الاختبارات (flutter test)
+        script: flutter test
+
+      - name: بناء Debug APK للتحقق (flutter build apk --debug)
+        script: flutter build apk --debug --dart-define=PUSH_RELAY_URL=${PUSH_RELAY_URL:-}
+
+      # الـ Debug APK للتحقق فقط — بنشيله عشان ما يتحطش في الـ artifacts جنب الـ Release.
+      - name: حذف Debug APK من المخرجات
+        script: rm -f build/app/outputs/flutter-apk/app-debug.apk*
+      # ===================== نهاية مراحل التحقق =====================
 
       - name: توليد أيقونة التطبيق (launcher icon)
         script: |
