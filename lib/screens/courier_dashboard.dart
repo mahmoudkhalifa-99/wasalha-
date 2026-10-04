@@ -455,7 +455,11 @@ class _CourierDashboardState extends State<CourierDashboard> {
       );
     }
 
+    // fit: expand ضروري: من غيره الـ Stack بيتقلص لحجم أكبر ابن غير موضّع، ولما
+    // تاب الخريطة يتفتح الابن ده بيبقى Offstage (حجمه صفر) فالخريطة بتتحط في
+    // مساحة 0 والشاشة بتبقى فاضية.
     return Stack(
+      fit: StackFit.expand,
       children: [
         Container(
           color: C.slate50,

@@ -38,10 +38,12 @@ Future<UserCredential> signInWithGoogle() async {
   if (account == null) throw const GoogleSignInCancelledException();
 
   final g = await account.authentication;
-  if (g.idToken == null) {
+  // لو idToken رجع null لأي سبب، Firebase بيقبل accessToken لوحده، فنكمل بيه
+  // بدل ما نوقف تسجيل الدخول. بنفشل بس لو الاتنين مش موجودين.
+  if (g.idToken == null && g.accessToken == null) {
     throw FirebaseAuthException(
       code: 'missing-id-token',
-      message: 'google-services.json مفيهوش Web client (حدّثه من Firebase)',
+      message: 'جوجل ما رجّعش أي توكن (راجع Web client ID و SHA-1)',
     );
   }
   final credential = GoogleAuthProvider.credential(

@@ -229,7 +229,7 @@ class _LoginScreenState extends State<LoginScreen> {
           'sign_in_failed' =>
             'إعدادات جوجل غير مكتملة (SHA-1 أو google-services.json)',
           'missing-id-token' =>
-            'google-services.json قديم، نزّله تاني من Firebase بعد إضافة SHA-1',
+            'جوجل ما رجّعش توكن، راجع Web client ID وبصمة SHA-1 في Firebase',
           'operation-not-allowed' => 'تسجيل الدخول بجوجل مش مفعّل في Firebase',
           'network-request-failed' ||
           'network_error' =>
