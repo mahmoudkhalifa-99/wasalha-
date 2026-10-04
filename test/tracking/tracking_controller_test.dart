@@ -70,6 +70,7 @@ class FakeSource implements DriverLocationSource {
 /// Routing بيستنى الاختبار يكمّل الرد يدويًا (لمحاكاة رد بطيء).
 class GatedRouting implements RoutingService {
   final List<Completer<RouteResult>> pending = [];
+  final List<LatLng> starts = []; // نقطة بداية كل طلب (بترجع بيها الردود)
   int calls = 0;
 
   @override
@@ -78,14 +79,17 @@ class GatedRouting implements RoutingService {
     required LatLng destination,
   }) {
     calls++;
+    starts.add(start);
     final c = Completer<RouteResult>();
     pending.add(c);
     return c.future;
   }
 }
 
-RouteResult _route() => RouteResult(
-      points: const [LatLng(30.55, 31.0), LatLng(30.56, 31.01)],
+// لو اتبعت [from] المسار بيبدأ من نقطة السائق (زي OSRM الحقيقي) فمبيبقاش
+// "خارج المسار" بعد الرد؛ من غيره بيرجع المسار الثابت القديم.
+RouteResult _route({LatLng? from}) => RouteResult(
+      points: [from ?? const LatLng(30.55, 31.0), const LatLng(30.56, 31.01)],
       distanceMeters: 1000,
       durationSeconds: 120,
     );
@@ -263,10 +267,11 @@ void main() {
     source.ctrl.add(fix(30.553, 31.0)); // ~333 متر والطلب الأول لسه معلّق
     await pump();
     expect(g.calls, 1); // طلب واحد في الجو
-    g.pending[0].complete(_route());
+    g.pending[0].complete(_route(from: g.starts[0]));
     await pump();
     expect(g.calls, 2); // الرد قديم → اتطلب مسار جديد من الموقع الحالي
-    g.pending[1].complete(_route());
+    // المسار الجديد بيبدأ من موقع السائق الحالي → مفيش خروج عن المسار ولا إعادة
+    g.pending[1].complete(_route(from: g.starts[1]));
     await pump();
     expect(g.calls, 2);
     b.dispose();
