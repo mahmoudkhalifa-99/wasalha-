@@ -97,10 +97,10 @@ class GeolocatorLocationService implements LocationService {
   }
 
   GeoFix _toFix(Position p, {required bool useDeviceTimestamp}) {
-    final DateTime? ts = p.timestamp;
     return GeoFix(
       position: LatLng(p.latitude, p.longitude),
-      updatedAt: useDeviceTimestamp ? (ts ?? DateTime.now()) : DateTime.now(),
+      // آخر موقع معروف: وقته الحقيقي (عشان يظهر STALE). نقطة جديدة: الآن.
+      updatedAt: useDeviceTimestamp ? p.timestamp : DateTime.now(),
       accuracy: p.accuracy,
     );
   }

@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io' show SocketException;
 
 import 'package:flutter_test/flutter_test.dart';

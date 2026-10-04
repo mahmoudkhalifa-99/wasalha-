@@ -364,7 +364,7 @@ class TrackingController {
       final moved =
           origin == null ? double.infinity : distanceMeters(origin, d.position);
       final off =
-          distanceToPolylineMeters(d.position, current!.points) > offRouteMeters;
+          distanceToPolylineMeters(d.position, current.points) > offRouteMeters;
       final at = _routeComputedAt;
       final aged = at != null &&
           _clock().difference(at) >= maxRouteAge &&
