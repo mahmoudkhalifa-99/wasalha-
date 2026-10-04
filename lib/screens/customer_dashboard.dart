@@ -21,6 +21,8 @@ import '../theme/app_text.dart';
 import '../utils.dart' as utils;
 import '../widgets/common.dart';
 import '../widgets/leaflet_map.dart';
+import '../widgets/map_location_picker.dart';
+import '../features/tracking/models/selected_location.dart';
 import 'activity_view.dart';
 import 'profile_view.dart';
 import 'wallet_view.dart';
@@ -48,6 +50,9 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   District? _dropoffDistrict;
   Village? _dropoffVillage;
   final _dropoffNoteCtrl = TextEditingController();
+  // نقطة دقيقة اختارها العميل (موقعي الحالي / من الخريطة). null = مركز القرية.
+  SelectedLocation? _dropoffPoint;
+  SelectedLocation? _pickupPoint;
 
   List<Restaurant> _restaurants = [];
   List<Ad> _ads = [];
@@ -256,14 +261,17 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   Future<void> _recalcDistance() async {
     final p = _pickupVillage, d = _dropoffVillage;
     if (p == null || d == null) return;
-    if (p.id == d.id) {
+    if (p.id == d.id && _pickupPoint == null && _dropoffPoint == null) {
       setState(() => _actualRoadDist = 0);
       return;
     }
     setState(() => _isCalculatingDist = true);
     try {
       final res = await utils.getRoadDistance(
-          p.center.lat, p.center.lng, d.center.lat, d.center.lng);
+          _pickupPoint?.latitude ?? p.center.lat,
+          _pickupPoint?.longitude ?? p.center.lng,
+          _dropoffPoint?.latitude ?? d.center.lat,
+          _dropoffPoint?.longitude ?? d.center.lng);
       if (!mounted) return;
       setState(() {
         _actualRoadDist = res.distance;
@@ -275,12 +283,44 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   }
 
   void _onPickupVillageChanged(Village v) {
-    setState(() => _pickupVillage = v);
+    setState(() {
+      _pickupVillage = v;
+      _pickupPoint = null; // اختار قرية يدويًا: نرجع لمركز القرية
+    });
     _recalcDistance();
   }
 
   void _onDropoffVillageChanged(Village v) {
-    setState(() => _dropoffVillage = v);
+    setState(() {
+      _dropoffVillage = v;
+      _dropoffPoint = null;
+    });
+    _recalcDistance();
+  }
+
+  /// نقطة اتحددت بالخريطة/الـ GPS: بنحفظها بدقتها، وبنختار أقرب قرية
+  /// تلقائيًا عشان التسعير والمسافة يفضلوا شغالين.
+  void _onDropoffPicked(SelectedLocation sel) {
+    final n = nearestVillage(sel.latLng);
+    setState(() {
+      _dropoffPoint = sel;
+      if (n != null) {
+        _dropoffDistrict = n.district;
+        _dropoffVillage = n.village;
+      }
+    });
+    _recalcDistance();
+  }
+
+  void _onPickupPicked(SelectedLocation sel) {
+    final n = nearestVillage(sel.latLng);
+    setState(() {
+      _pickupPoint = sel;
+      if (n != null) {
+        _pickupDistrict = n.district;
+        _pickupVillage = n.village;
+      }
+    });
     _recalcDistance();
   }
 
@@ -342,14 +382,21 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     setState(() => _isSubmitting = true);
     try {
       final orderPrice = price ?? _estimatedPrice;
+      final pp = _pickupPoint;
       final orderPickup = (_selectedCategory == OrderCategory.taxi &&
               _pickupVillage != null)
           ? OrderPlace(
-              address: _pickupVillage!.name,
-              lat: _pickupVillage!.center.lat,
-              lng: _pickupVillage!.center.lng,
+              address: pp != null
+                  ? '${_pickupVillage!.name} - ${pp.address}'
+                  : _pickupVillage!.name,
+              lat: pp?.latitude ?? _pickupVillage!.center.lat,
+              lng: pp?.longitude ?? _pickupVillage!.center.lng,
               villageName: _pickupVillage!.name)
           : pickup;
+      // النقطة الدقيقة بتتطبّق بس لو القرية لسه هي المختارة (مش قرية جاية من المنيو).
+      final dp = (_dropoffPoint != null && finalVillage.id == _dropoffVillage?.id)
+          ? _dropoffPoint
+          : null;
 
       final orderData = <String, dynamic>{
         'customerId': user.id,
@@ -358,9 +405,11 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         'paymentMethod': PaymentMethod.cash.value,
         'pickup': orderPickup?.toMap(),
         'dropoff': OrderPlace(
-                address: finalVillage.name,
-                lat: finalVillage.center.lat,
-                lng: finalVillage.center.lng,
+                address: dp != null
+                    ? '${finalVillage.name} - ${dp.address}'
+                    : finalVillage.name,
+                lat: dp?.latitude ?? finalVillage.center.lat,
+                lng: dp?.longitude ?? finalVillage.center.lng,
                 villageName: finalVillage.name)
             .toMap(),
         'requestedVehicleType': _selectedVehicle.value,
@@ -769,8 +818,13 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         selectedDistrict: _dropoffDistrict,
         selectedVillage: _dropoffVillage,
         onSelectDistrict: (d) => setState(() => _dropoffDistrict = d),
-        onSelectVillage: (v) => setState(() => _dropoffVillage = v),
+        onSelectVillage: (v) => setState(() {
+          _dropoffVillage = v;
+          _dropoffPoint = null;
+        }),
         addressNoteCtrl: _dropoffNoteCtrl,
+        pickedAddress: _dropoffPoint?.address,
+        onPickedOnMap: _onDropoffPicked,
       ),
       const SizedBox(height: 24),
       PressScale(
@@ -952,6 +1006,8 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         onSelectDistrict: (d) => setState(() => _pickupDistrict = d),
         onSelectVillage: _onPickupVillageChanged,
         addressNoteCtrl: _pickupNoteCtrl,
+        pickedAddress: _pickupPoint?.address,
+        onPickedOnMap: _onPickupPicked,
       ),
       const SizedBox(height: 20),
       LocationSelector(
@@ -964,6 +1020,8 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         onSelectDistrict: (d) => setState(() => _dropoffDistrict = d),
         onSelectVillage: _onDropoffVillageChanged,
         addressNoteCtrl: _dropoffNoteCtrl,
+        pickedAddress: _dropoffPoint?.address,
+        onPickedOnMap: _onDropoffPicked,
       ),
       const SizedBox(height: 20),
       Align(
@@ -2032,6 +2090,12 @@ class LocationSelector extends StatefulWidget {
   final TextEditingController? addressNoteCtrl;
   final bool minimal;
 
+  /// لو اتحدد: بيظهر زرّين (موقعي الحالي / من الخريطة) والنتيجة بترجع هنا.
+  final void Function(SelectedLocation)? onPickedOnMap;
+
+  /// عنوان النقطة المختارة (للعرض تحت الأزرار).
+  final String? pickedAddress;
+
   const LocationSelector({
     super.key,
     required this.label,
@@ -2044,6 +2108,8 @@ class LocationSelector extends StatefulWidget {
     required this.onSelectVillage,
     this.addressNoteCtrl,
     this.minimal = false,
+    this.onPickedOnMap,
+    this.pickedAddress,
   });
 
   @override
@@ -2053,6 +2119,67 @@ class LocationSelector extends StatefulWidget {
 class _LocationSelectorState extends State<LocationSelector> {
   bool _showDistricts = false;
   bool _showVillages = false;
+  bool _locating = false;
+
+  Future<void> _useMyLocation() async {
+    if (_locating) return;
+    setState(() => _locating = true);
+    try {
+      final r = await fetchCurrentLocation();
+      if (!mounted) return;
+      if (r.location != null) {
+        widget.onPickedOnMap?.call(r.location!);
+      } else {
+        showAppAlert(context, r.error ?? 'تعذّر تحديد موقعك');
+      }
+    } finally {
+      if (mounted) setState(() => _locating = false);
+    }
+  }
+
+  Future<void> _pickOnMap() async {
+    final sel = await pickLocationOnMap(context);
+    if (sel != null && mounted) widget.onPickedOnMap?.call(sel);
+  }
+
+  Widget _mapActionButton({
+    required IconData icon,
+    required String text,
+    required VoidCallback? onTap,
+    bool loading = false,
+  }) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+          decoration: BoxDecoration(
+            color: C.emerald500.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: C.emerald500.withOpacity(0.35)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (loading)
+                const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+              else
+                Icon(icon, size: 16, color: C.emerald600),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(text,
+                    overflow: TextOverflow.ellipsis,
+                    style: T.s(11, T.w800, C.emerald700)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   Future<void> _pickDistrict() async {
     final picked = await _showPicker(
@@ -2145,6 +2272,42 @@ class _LocationSelectorState extends State<LocationSelector> {
               ],
             ),
             const SizedBox(height: 16),
+          ],
+          if (widget.onPickedOnMap != null) ...[
+            Row(
+              children: [
+                _mapActionButton(
+                  icon: Icons.my_location_rounded,
+                  text: 'موقعي الحالي',
+                  loading: _locating,
+                  onTap: _useMyLocation,
+                ),
+                const SizedBox(width: 12),
+                _mapActionButton(
+                  icon: LucideIcons.mapPin,
+                  text: 'اختيار من الخريطة',
+                  onTap: _pickOnMap,
+                ),
+              ],
+            ),
+            if (widget.pickedAddress != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(LucideIcons.checkCircle2,
+                      size: 14, color: C.emerald600),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(widget.pickedAddress!,
+                        textAlign: TextAlign.right,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: T.s(10, T.w600, C.slate600)),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 12),
           ],
           Row(
             children: [

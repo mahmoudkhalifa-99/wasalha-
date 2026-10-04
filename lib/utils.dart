@@ -45,12 +45,20 @@ class RoadDistance {
   const RoadDistance(this.distance, this.duration);
 }
 
+// كاش بسيط للمسافات (نفس الزوج تاني = فوري بدل انتظار OSRM العام لحد 2.5 ث).
+// بيتخزّن بس الرد الحقيقي من OSRM، مش التقدير الاحتياطي.
+final Map<String, RoadDistance> _roadDistCache = {};
+
 /// حساب المسافة الفعلية والزمن التقديري للطرق
 Future<RoadDistance> getRoadDistance(
     double lat1, double lon1, double lat2, double lon2) async {
   if (lat1 == 0 || lon1 == 0 || lat2 == 0 || lon2 == 0) {
     return const RoadDistance(0, 0);
   }
+  final key = '${lat1.toStringAsFixed(4)},${lon1.toStringAsFixed(4)}|'
+      '${lat2.toStringAsFixed(4)},${lon2.toStringAsFixed(4)}';
+  final cached = _roadDistCache[key];
+  if (cached != null) return cached;
   try {
     final url = Uri.parse(
         'https://router.project-osrm.org/route/v1/driving/$lon1,$lat1;$lon2,$lat2?overview=false');
@@ -60,10 +68,12 @@ Future<RoadDistance> getRoadDistance(
       final data = jsonDecode(response.body);
       if (data is Map && data['code'] == 'Ok' && (data['routes'] as List).isNotEmpty) {
         final r = data['routes'][0];
-        return RoadDistance(
+        final res = RoadDistance(
           double.parse(((r['distance'] as num) / 1000).toStringAsFixed(1)),
           ((r['duration'] as num) / 60).ceil(),
         );
+        if (_roadDistCache.length > 200) _roadDistCache.clear();
+        return _roadDistCache[key] = res;
       }
     }
   } catch (_) {

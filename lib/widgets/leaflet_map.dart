@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart' as ll;
 
+import '../core/map/map_config.dart';
 import '../theme/app_colors.dart';
 
 /// نسخة Flutter من إعداد خريطة Leaflet المستخدم في نسخة الويب:
-/// نفس التايل سيرفر (CartoDB light_all) بنفس الأسلوب.
+/// التايلز من MapConfig (مكان واحد للتغيير).
 class WasalhaMap extends StatefulWidget {
   final ll.LatLng center;
   final double zoom;
@@ -118,12 +119,11 @@ class _WasalhaMapState extends State<WasalhaMap> {
           ),
           children: [
             TileLayer(
-              urlTemplate:
-                  'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-              subdomains: const ['a', 'b', 'c', 'd'],
-              retinaMode: RetinaMode.isHighDensity(context),
+              urlTemplate: MapConfig.tileUrlTemplate,
+              subdomains: MapConfig.tileSubdomains,
+              retinaMode: MapConfig.retinaFor(context),
               maxNativeZoom: 19,
-              userAgentPackageName: 'com.wasalah.app',
+              userAgentPackageName: MapConfig.userAgentPackageName,
             ),
             if (widget.routeGeometry.length > 1)
               PolylineLayer(polylines: [
@@ -138,7 +138,7 @@ class _WasalhaMapState extends State<WasalhaMap> {
               alignment: AttributionAlignment.bottomRight,
               showFlutterMapAttribution: false,
               attributions: [
-                TextSourceAttribution('© OpenStreetMap contributors © CARTO'),
+                TextSourceAttribution(MapConfig.attribution),
               ],
             ),
           ],
@@ -171,6 +171,7 @@ Marker driverMarker(ll.LatLng point) {
     height: 48,
     child: Stack(
       alignment: Alignment.center,
+      clipBehavior: Clip.none,
       children: [
         Container(
           width: 48,

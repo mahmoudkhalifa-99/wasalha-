@@ -173,7 +173,7 @@ class _TrackingMapState extends State<TrackingMap> {
             TileLayer(
               urlTemplate: MapConfig.tileUrlTemplate,
               subdomains: MapConfig.tileSubdomains,
-              retinaMode: RetinaMode.isHighDensity(context),
+              retinaMode: MapConfig.retinaFor(context),
               maxNativeZoom: 19,
               userAgentPackageName: MapConfig.userAgentPackageName,
             ),

@@ -50,6 +50,7 @@ TrackingScreen (UI)  →  TrackingController / LocationPickerController
 - **الحداثة:** `Freshness` = LIVE / STALE / WAITING / UNAVAILABLE بعتبات في `TrackingConfig`
   (30 ثانية / 10 دقائق). **دقة GPS:** `maxAcceptedAccuracyMeters` (افتراضي 50 م) — النقطة السيئة بتتجاهل
   والتتبع بيكمّل.
+- **التايلز الافتراضية:** OpenStreetMap الرسمية (CARTO بقت تطلب مفتاح وبتظهر "API KEY REQUIRED"). للإنتاج الكثيف استخدم مزوّد بمفتاح عبر `MAP_TILE_URL`.
 - **إعدادات وقت البناء (`--dart-define`):** `MAP_TILE_URL`, `MAP_TILE_ATTRIBUTION`, `GEOCODER_URL`.
   الـ Geocoder الافتراضي (Nominatim العام) **للتجربة فقط**.
 

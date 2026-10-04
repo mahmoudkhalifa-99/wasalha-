@@ -1,8 +1,8 @@
-import 'package:flutter/painting.dart' show Color;
+import 'package:flutter/widgets.dart' show BuildContext, Color;
+import 'package:flutter_map/flutter_map.dart' show RetinaMode;
 import 'package:latlong2/latlong.dart';
 
 /// إعدادات الخريطة المشتركة. لو عايز تغيّر مزوّد التايلز مستقبلًا، غيّره هنا بس.
-/// (نفس التايل سيرفر المستخدم في WasalhaMap الحالية: CartoDB على بيانات OSM.)
 /// شكل خط المسار (قابل للتعديل من مكان واحد، وممكن يتمرّر لـ TrackingMap).
 class RouteStyle {
   const RouteStyle({
@@ -32,18 +32,24 @@ class MapConfig {
   /// ممكن تتغيّر وقت البناء من غير تعديل كود:
   ///   --dart-define=MAP_TILE_URL=https://.../{z}/{x}/{y}{r}.png?key=XXX
   ///   --dart-define=MAP_TILE_ATTRIBUTION="© OpenStreetMap contributors © MapTiler"
-  /// تنبيه: CARTO بقت بتطلب API key، وتصريحها موجّه للاستخدام غير التجاري.
-  /// راجع شروط المزوّد قبل الإنتاج.
+  /// تنبيه: CARTO بقت بتطلب API key (بتظهر علامة "API KEY REQUIRED" على الخريطة)،
+  /// فالافتراضي بقى تايلز OpenStreetMap الرسمية (من غير مفتاح).
+  /// سياسة OSM للتايلز مناسبة للاستخدام الخفيف/التجريبي؛ للإنتاج الكثيف مرّر
+  /// مزوّد بمفتاح (MapTiler / Stadia / ...) عبر MAP_TILE_URL.
   static const String tileUrlTemplate = String.fromEnvironment(
     'MAP_TILE_URL',
-    defaultValue:
-        'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    defaultValue: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   );
-  static const List<String> tileSubdomains = ['a', 'b', 'c', 'd'];
+  static const List<String> tileSubdomains = ['a', 'b', 'c'];
+
+  /// Retina بس لو القالب نفسه بيدعم {r}. من غير كده flutter_map بيطلب تايلز
+  /// zoom+1 (4 أضعاف الطلبات) من غير أي زيادة في الوضوح = خريطة أبطأ.
+  static bool retinaFor(BuildContext context) =>
+      tileUrlTemplate.contains('{r}') && RetinaMode.isHighDensity(context);
   static const String userAgentPackageName = 'com.wasalah.app';
   static const String attribution = String.fromEnvironment(
     'MAP_TILE_ATTRIBUTION',
-    defaultValue: '© OpenStreetMap contributors © CARTO',
+    defaultValue: '© OpenStreetMap contributors',
   );
   static const String osmCopyrightUrl = 'https://www.openstreetmap.org/copyright';
 
