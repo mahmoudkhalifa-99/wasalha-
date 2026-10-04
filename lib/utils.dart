@@ -14,12 +14,71 @@ const List<String> _osrmBases = [
   'https://routing.openstreetmap.de/routed-car/route/v1/driving',
 ];
 
+/// معلومات إضافية عن آخر محاولة جلب مسار (بدون ما نغيّر شكل الرد).
+class RouteFetchInfo {
+  /// true لو أي سيرفر رجّع 429 (ضغط زائد) في المحاولة دي.
+  bool rateLimited = false;
+}
+
+/// تباعد تصاعدي لإعادة محاولة جلب المسار بعد الفشل: 10 ث ← 20 ← 40 ← 80 ← 160 (حد أقصى).
+/// 429 بيزوّد مرحلة. أول نجاح بيصفّر العدّاد.
+class RouteBackoff {
+  RouteBackoff({
+    this.base = const Duration(seconds: 10),
+    this.maxExponent = 4,
+    DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now;
+
+  final Duration base;
+  final int maxExponent;
+  final DateTime Function() _clock;
+
+  int _failures = 0;
+  DateTime? _retryAt;
+
+  int get failures => _failures;
+
+  /// لسه جوه فترة الانتظار بعد فشل؟
+  bool get blocked {
+    final at = _retryAt;
+    return at != null && _clock().isBefore(at);
+  }
+
+  /// الوقت المتبقي لحد المحاولة الجاية (صفر لو مفيش انتظار).
+  Duration get remaining {
+    final at = _retryAt;
+    if (at == null) return Duration.zero;
+    final d = at.difference(_clock());
+    return d.isNegative ? Duration.zero : d;
+  }
+
+  /// يسجّل فشل ويرجّع مدة الانتظار قبل المحاولة الجاية.
+  Duration fail({bool rateLimited = false}) {
+    _failures++;
+    final e = _failures + (rateLimited ? 1 : 0) - 1;
+    final exp = e < 0 ? 0 : (e > maxExponent ? maxExponent : e);
+    final wait = base * (1 << exp);
+    _retryAt = _clock().add(wait);
+    return wait;
+  }
+
+  void succeed() {
+    _failures = 0;
+    _retryAt = null;
+  }
+
+  /// تصفير كامل (مثلاً لما الوجهة تتغير).
+  void reset() => succeed();
+}
+
 Future<List<List<double>>?> _osrmGeometry(
-    String base, double lat1, double lon1, double lat2, double lon2) async {
+    String base, double lat1, double lon1, double lat2, double lon2,
+    RouteFetchInfo? info) async {
   try {
     final url = Uri.parse(
         '$base/$lon1,$lat1;$lon2,$lat2?overview=full&geometries=geojson');
     final response = await http.get(url).timeout(const Duration(seconds: 8));
+    if (response.statusCode == 429) info?.rateLimited = true;
     if (response.statusCode != 200) return null;
     final data = jsonDecode(response.body);
     if (data is Map &&
@@ -40,12 +99,13 @@ Future<List<List<double>>?> _osrmGeometry(
 /// مسار السير على الطرق. لو كل السيرفرات فشلت بيرجع خط مستقيم من نقطتين
 /// (استخدم [isStraightFallback] عشان متستبدلش مسار حقيقي قديم بيه).
 Future<List<List<double>>> getRouteGeometry(
-    double lat1, double lon1, double lat2, double lon2) async {
+    double lat1, double lon1, double lat2, double lon2,
+    {RouteFetchInfo? info}) async {
   if (lat1 == 0 || lon1 == 0 || lat2 == 0 || lon2 == 0) return [];
   final completer = Completer<List<List<double>>?>();
   var pending = _osrmBases.length;
   for (final b in _osrmBases) {
-    _osrmGeometry(b, lat1, lon1, lat2, lon2).then((r) {
+    _osrmGeometry(b, lat1, lon1, lat2, lon2, info).then((r) {
       if (completer.isCompleted) return;
       if (r != null) {
         completer.complete(r);

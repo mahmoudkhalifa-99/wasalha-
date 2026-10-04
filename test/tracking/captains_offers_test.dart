@@ -62,8 +62,39 @@ void main() {
     });
   });
 
+  group('نقطة الاستلام الحقيقية (orderPickupPoint)', () {
+    // النقطة الوهمية القديمة اللي كانت بتتخزن للصيدلية والطلب اليدوي.
+    const legacyFake = {'address': 'صيدلية', 'lat': 30.2931, 'lng': 30.9863};
+
+    test('مشوار: نقطة الاستلام', () {
+      expect(orderPickupPoint(_order()), const LatLng(30.5, 31.0));
+    });
+
+    test('مطعم من القائمة: موقع المطعم', () {
+      final o = _order(category: 'FOOD', restaurantId: 'r1');
+      expect(orderPickupPoint(o), const LatLng(30.5, 31.0));
+    });
+
+    test('صيدلية بإحداثيات وهمية قديمة: null (مفيش علامة استلام)', () {
+      expect(orderPickupPoint(_order(category: 'PHARMACY', pickup: legacyFake)),
+          isNull);
+    });
+
+    test('صيدلية بإحداثيات 0 (الطلبات الجديدة): null', () {
+      final o = _order(
+          category: 'PHARMACY',
+          pickup: const {'address': 'صيدلية', 'lat': 0, 'lng': 0});
+      expect(orderPickupPoint(o), isNull);
+    });
+
+    test('طلب مطعم يدوي بإحداثيات وهمية قديمة: null', () {
+      expect(orderPickupPoint(_order(category: 'FOOD', pickup: legacyFake)),
+          isNull);
+    });
+  });
+
   group('أقرب كابتن', () {
-    final ref = const LatLng(30.5, 31.0);
+    const ref = LatLng(30.5, 31.0);
 
     test('بيختار الأقرب فعلًا حتى لو سعره أعلى', () {
       final offers = [_offer('far', 20), _offer('near', 50)];

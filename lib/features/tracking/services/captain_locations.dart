@@ -9,7 +9,9 @@ import 'driver_location_source.dart';
 /// على طلب العميل). اشتراك واحد لكل كابتن، وبيتقفل لما الكابتن يختفي من
 /// القائمة أو عند dispose().
 ///
-/// القراءة بس من users/{id}.location (القواعد بتسمح بالقراءة لأي مستخدم مسجّل).
+/// القراءة بس من driver_locations/{id}. القواعد بتسمح للعميل يقرأ موقع الكابتن
+/// لو الكابتن ضافه في `viewers` (يعني قدّم عرض على طلبه). كابتن مش مسموح
+/// بقراءته بيطلع permission-denied، والخطأ ده بيتجاهل لكل كابتن لوحده.
 class CaptainLocations {
   CaptainLocations({DriverLocationSource Function(String driverId)? sourceFor})
       : _sourceFor = sourceFor ?? FirestoreDriverLocationSource.new;

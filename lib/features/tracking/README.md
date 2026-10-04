@@ -8,7 +8,7 @@
 - `core/map/osrm_routing_service.dart` — OSRM (بدون API key).
 - `core/map/map_config.dart` — التايلز والمركز الافتراضي.
 - `services/location_service.dart` — الصلاحيات وGPS (geolocator).
-- `services/driver_location_source.dart` — قراءة موقع السائق من Firestore، وبث موقع السائق.
+- `services/driver_location_source.dart` — قراءة/بث موقع السائق عبر `driver_locations/{id}` (مش users/{id}).
 - `controllers/tracking_controller.dart` — الحالة (ValueNotifiers) + throttle المسار.
 - `widgets/` + `screens/tracking_screen.dart` — الواجهة.
 
@@ -56,3 +56,17 @@ TrackingScreen (UI)  →  TrackingController / LocationPickerController
 
 TODO BEFORE PRODUCTION:
 Firestore location.updatedAt should use serverTimestamp rather than relying on driver device clock.
+
+## خصوصية موقع الكابتن وتحصين الكتابة (v21)
+- الموقع بقى في `driver_locations/{driverId}` = `{ lat, lng, updatedAt, viewers[] }`.
+  القراءة: الكابتن، الإدارة، أو عميل موجود في `viewers`. تطبيق الكابتن بيضيف عميل أي
+  طلب قدّم عليه عرض (أو اتعيّن عليه) وبيشيله لما الطلب يخلص أو يروح لكابتن تاني.
+  لازم تنشر `firestore.rules` الجديدة.
+- كتابة الموقع من شاشة الكابتن بتمر على `DriverLocationPublisher` (كتابة واحدة في
+  نفس الوقت وآخر موقع بس): أوفلاين مفيش طابور كتابات بيتراكم.
+- المسار (OSRM) في شاشتي الكابتن والعميل: طلب واحد في نفس الوقت، وبعد الفشل/429
+  تباعد 10 ← 20 ← 40 ← 80 ← 160 ث (`RouteBackoff` في `lib/utils.dart`).
+- أخطاء GPS في شاشة الكابتن: إعادة محاولة بتباعد (5 ← 80 ث) لو الخدمة مقفولة أو الخطأ
+  مؤقت، ورسالة مرة واحدة لو الإذن مرفوض (من غير تكرار).
+- الصيدلية والطلب اليدوي: إحداثيات الاستلام `0,0` = غير معروفة، ومفيش علامة استلام
+  ولا مسار لها (الطلبات القديمة بالنقطة الوهمية بتتعامل نفس الشكل).

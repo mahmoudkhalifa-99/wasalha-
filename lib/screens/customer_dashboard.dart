@@ -13,11 +13,13 @@ import '../config_constants.dart';
 import '../core/map/geo_utils.dart' as geo;
 import '../features/tracking/models/tracking_models.dart' show GeoFix;
 import '../features/tracking/services/captain_locations.dart';
+import '../features/tracking/services/driver_location_source.dart' show driverLocationsCollection;
 import '../models/models.dart';
 import '../services/back_interceptor.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
 import '../services/order_service.dart' as order_service;
+import '../services/storage_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_shadows.dart';
 import '../theme/app_text.dart';
@@ -90,6 +92,10 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   // Tracking
   ll.LatLng? _driverLoc;
   List<ll.LatLng> _routeGeometry = [];
+  // مسار الكابتن: طلب واحد في نفس الوقت + تباعد تصاعدي بعد الفشل/429.
+  final utils.RouteBackoff _routeBackoff = utils.RouteBackoff();
+  bool _routeInFlight = false;
+  Timer? _routeRetryTimer;
 
   StreamSubscription? _subRestaurants, _subAds, _subOrders, _subOffers, _subDriver;
 
@@ -189,6 +195,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     _subOrders?.cancel();
     _subOffers?.cancel();
     _subDriver?.cancel();
+    _routeRetryTimer?.cancel();
     _captainLocs.dispose();
     _pickupNoteCtrl.dispose();
     _dropoffNoteCtrl.dispose();
@@ -201,6 +208,11 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   void _onActiveOrderChanged() {
     _subOffers?.cancel();
     _subDriver?.cancel();
+    // الوجهة اتغيّرت (مرحلة جديدة/كابتن جديد): المسار والتباعد القديمين ملغيين.
+    _routeRetryTimer?.cancel();
+    _routeBackoff.reset();
+    _lastRouteAt = null;
+    _routeGeometry = [];
 
     final order = _activeOrder;
     if (order != null && order.status == OrderStatus.pending) {
@@ -227,57 +239,105 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     if (order != null &&
         order.driverId != null &&
         order.status != OrderStatus.pending) {
+      // موقع الكابتن في driver_locations (القواعد: مقروء للعميل بس لو الكابتن
+      // ضافه في viewers، يعني قدّم عرض على طلبه أو اتعيّن عليه).
       _subDriver = db
-          .collection('users')
+          .collection(driverLocationsCollection)
           .doc(order.driverId)
           .snapshots()
-          .listen((docSnap) async {
+          .listen((docSnap) {
         if (!mounted || !docSnap.exists) return;
         final data = docSnap.data();
-        final loc = data?['location'];
-        if (loc is Map) {
-          final lat = (loc['lat'] as num).toDouble();
-          final lng = (loc['lng'] as num).toDouble();
-          final newLoc = ll.LatLng(lat, lng);
-          final moved = _driverLoc == null ||
-              (_driverLoc!.latitude - lat).abs() > 0.00005 ||
-              (_driverLoc!.longitude - lng).abs() > 0.00005;
-          if (!moved) return; // نفس المكان: مفيش داعي لإعادة البناء
-          setState(() => _driverLoc = newLoc);
-          final dest = order.status == OrderStatus.assigned
-              ? order.pickup
-              : order.dropoff;
-          // المسار: مرة كل 15 ثانية بحد أقصى
-          final now = DateTime.now();
-          if (_lastRouteAt != null &&
-              now.difference(_lastRouteAt!) < const Duration(seconds: 15) &&
-              _routeGeometry.isNotEmpty) {
-            return;
-          }
-          _lastRouteAt = now;
-          final geo = await utils.getRouteGeometry(lat, lng, dest.lat, dest.lng);
-          if (!mounted) return;
-          if (utils.isStraightFallback(geo)) {
-            // فشل السيرفر: منستبدلش طريق حقيقي قديم بخط مستقيم، ونعيد
-            // المحاولة مع أول تحديث لموقع الكابتن.
-            _lastRouteAt = null;
-            if (_routeGeometry.length <= 2) {
-              setState(() => _routeGeometry =
-                  geo.map((p) => ll.LatLng(p[0], p[1])).toList());
-            }
-            return;
-          }
-          setState(() => _routeGeometry =
-              geo.map((p) => ll.LatLng(p[0], p[1])).toList());
-        }
-      }, onError: (e) => handleFirestoreError(
-          e, OperationType.get, 'users/${order.driverId}'));
+        final latV = data?['lat'];
+        final lngV = data?['lng'];
+        if (latV is! num || lngV is! num) return;
+        final lat = latV.toDouble();
+        final lng = lngV.toDouble();
+        final moved = _driverLoc == null ||
+            (_driverLoc!.latitude - lat).abs() > 0.00005 ||
+            (_driverLoc!.longitude - lng).abs() > 0.00005;
+        if (!moved) return; // نفس المكان: مفيش داعي لإعادة البناء
+        setState(() => _driverLoc = ll.LatLng(lat, lng));
+        _refreshDriverRoute();
+      }, onError: (e) => debugPrint('driver location unavailable: $e'));
+      // لو موقع الكابتن معروف من قبل، نحسب مسار الوجهة الجديدة فورًا.
+      if (_driverLoc != null) _refreshDriverRoute(force: true);
     } else {
       setState(() {
         _driverLoc = null;
         _routeGeometry = [];
       });
     }
+  }
+
+  /// نقطة الاستلام الحقيقية (null للصيدلية/الطلب اليدوي) أو مكان العميل.
+  ll.LatLng? _trackingDestination(Order order) =>
+      order.status == OrderStatus.assigned
+          ? orderPickupPoint(order)
+          : orderDropoffPoint(order);
+
+  /// مسار الكابتن للوجهة: كل 15 ثانية بحد أقصى، وبعد الفشل/429 بتباعد تصاعدي.
+  Future<void> _refreshDriverRoute({bool force = false}) async {
+    final order = _activeOrder;
+    final from = _driverLoc;
+    final dest = order == null ? null : _trackingDestination(order);
+    if (order == null || from == null || dest == null) {
+      _routeRetryTimer?.cancel();
+      _routeBackoff.reset();
+      if (mounted && _routeGeometry.isNotEmpty) {
+        setState(() => _routeGeometry = []);
+      }
+      return;
+    }
+    if (_routeInFlight || _routeBackoff.blocked) return;
+    final now = DateTime.now();
+    if (!force &&
+        _lastRouteAt != null &&
+        now.difference(_lastRouteAt!) < const Duration(seconds: 15) &&
+        _routeGeometry.isNotEmpty) {
+      return;
+    }
+    _lastRouteAt = now;
+    _routeInFlight = true;
+    final info = utils.RouteFetchInfo();
+    final key = '${order.id}|${order.status.value}';
+    var stale = false;
+    try {
+      final geo = await utils.getRouteGeometry(
+          from.latitude, from.longitude, dest.latitude, dest.longitude,
+          info: info);
+      if (!mounted) return;
+      final cur = _activeOrder;
+      if (cur == null || '${cur.id}|${cur.status.value}' != key) {
+        stale = true; // الطلب/المرحلة اتغيّرت أثناء الانتظار
+      } else if (utils.isStraightFallback(geo)) {
+        // فشل السيرفر: منستبدلش طريق حقيقي قديم بخط مستقيم، وبنعيد المحاولة
+        // بتباعد تصاعدي (مش مع كل تحديث لموقع الكابتن).
+        _onRouteFailure(rateLimited: info.rateLimited);
+        if (_routeGeometry.length <= 2) {
+          setState(() => _routeGeometry =
+              geo.map((p) => ll.LatLng(p[0], p[1])).toList());
+        }
+      } else {
+        _routeBackoff.succeed();
+        _routeRetryTimer?.cancel();
+        setState(() =>
+            _routeGeometry = geo.map((p) => ll.LatLng(p[0], p[1])).toList());
+      }
+    } catch (_) {
+      if (mounted) _onRouteFailure();
+    } finally {
+      _routeInFlight = false;
+    }
+    if (stale && mounted) _refreshDriverRoute(force: true);
+  }
+
+  void _onRouteFailure({bool rateLimited = false}) {
+    final wait = _routeBackoff.fail(rateLimited: rateLimited);
+    _routeRetryTimer?.cancel();
+    _routeRetryTimer = Timer(wait, () {
+      if (mounted) _refreshDriverRoute(force: true);
+    });
   }
 
   Future<void> _recalcDistance() async {
@@ -408,6 +468,26 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     }
     setState(() => _isSubmitting = true);
     try {
+      // صورة الروشتة: نرفعها على Storage ونحفظ الرابط بدل base64 جوه الطلب
+      // (حد وثيقة Firestore 1 ميجا). لو الرفع فشل نحتفظ بها داخل الطلب بس لو صغيرة.
+      var rx = prescriptionImage;
+      if (rx != null && rx.startsWith('data:')) {
+        final inline = rx;
+        try {
+          rx = await StorageService.uploadPrescription(
+              uid: user.id, dataUrl: inline);
+        } catch (e) {
+          debugPrint('prescription upload failed: $e');
+          if (inline.length > StorageService.maxInlineChars) {
+            if (mounted) {
+              showAppAlert(context,
+                  'تعذر رفع صورة الروشتة. اتأكد من الاتصال وحاول تاني.');
+            }
+            return;
+          }
+        }
+      }
+
       final orderPrice = price ?? _estimatedPrice;
       final pp = _pickupPoint;
       final orderPickup = (_selectedCategory == OrderCategory.taxi &&
@@ -453,7 +533,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         if (restaurantName != null) 'restaurantName': restaurantName,
         if (foodItems != null)
           'foodItems': foodItems.map((e) => e.toMap()).toList(),
-        if (prescriptionImage != null) 'prescriptionImage': prescriptionImage,
+        if (rx != null) 'prescriptionImage': rx,
       };
 
       final newOrderId = await order_service.createOrder(orderData);
@@ -583,8 +663,9 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                 deliveryVillage: data.village,
                 deliveryPoint: data.point,
                 price: 35, // سعر مبدأي تقديري (نفس نسخة الويب)
+                // مطعم يدوي: مكانه مش معروف. الإحداثيات 0 = "غير موجودة" (مش نقطة وهمية).
                 pickup: const OrderPlace(
-                    address: '', lat: 30.2931, lng: 30.9863, villageName: 'خارجي'),
+                    address: '', lat: 0, lng: 0, villageName: 'خارجي'),
               );
               setState(() => _showManualRest = false);
             },
@@ -871,10 +952,11 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
             : () => _handleCreateOrder(
                 specialRequest: _pharmacyNoteCtrl.text,
                 prescriptionImage: _prescriptionImage,
+                // الصيدلية مكانها مش معروف. الإحداثيات 0 = "غير موجودة" (مش نقطة وهمية).
                 pickup: const OrderPlace(
                     address: 'صيدلية',
-                    lat: 30.2931,
-                    lng: 30.9863,
+                    lat: 0,
+                    lng: 0,
                     villageName: 'أقرب صيدلية')),
         child: Container(
           width: double.infinity,
@@ -1669,6 +1751,12 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   }
 
   Widget _trackingView(BuildContext context, Order order) {
+    final isAssigned = order.status == OrderStatus.assigned;
+    // نقطة الاستلام الحقيقية بس. الصيدلية/الطلب اليدوي مالهمش مكان معروف، فمنعرضش
+    // علامة استلام في مكان غلط (ولا بنرسم مسار ليه).
+    final pickupPt = orderPickupPoint(order);
+    final dropPt = orderDropoffPoint(order);
+    final fitTarget = (isAssigned ? pickupPt : dropPt) ?? dropPt;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1688,18 +1776,15 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                   zoom: 15,
                   markers: [
                     driverMarker(_driverLoc!),
-                    order.status == OrderStatus.assigned
-                        ? pickupPointMarker(
-                            ll.LatLng(order.pickup.lat, order.pickup.lng))
-                        : customerHomeMarker(
-                            ll.LatLng(order.dropoff.lat, order.dropoff.lng)),
+                    if (isAssigned && pickupPt != null)
+                      pickupPointMarker(pickupPt),
+                    if (dropPt != null && (!isAssigned || pickupPt == null))
+                      customerHomeMarker(dropPt),
                   ],
                   routeGeometry: _routeGeometry,
                   fitPoints: [
                     _driverLoc!,
-                    order.status == OrderStatus.assigned
-                        ? ll.LatLng(order.pickup.lat, order.pickup.lng)
-                        : ll.LatLng(order.dropoff.lat, order.dropoff.lng),
+                    if (fitTarget != null) fitTarget,
                   ],
                 ),
                 Positioned(

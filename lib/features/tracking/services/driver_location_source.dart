@@ -11,8 +11,13 @@ abstract class DriverLocationSource {
   Stream<GeoFix> watch();
 }
 
-/// يقرأ users/{driverId}.location — نفس الشكل اللي بيكتبه التطبيق الحالي:
-/// { lat, lng, updatedAt(ms) }.
+/// اسم الكوليكشن اللي فيه موقع الكابتن. موقع الكابتن مبقاش في users/{id}
+/// (اللي أي مستخدم مسجّل يقدر يقراه) — بقى هنا، والقراءة بالقواعد مقصورة على
+/// الكابتن نفسه والإدارة والعملاء في حقل `viewers`.
+const String driverLocationsCollection = 'driver_locations';
+
+/// يقرأ driver_locations/{driverId}: { lat, lng, updatedAt(ms), viewers[] }.
+/// لو العميل مش في `viewers` الكابتن القواعد بترفض القراءة (permission-denied).
 class FirestoreDriverLocationSource implements DriverLocationSource {
   FirestoreDriverLocationSource(this.driverId, {FirebaseFirestore? firestore})
       : _db = firestore ?? FirebaseFirestore.instance;
@@ -23,7 +28,7 @@ class FirestoreDriverLocationSource implements DriverLocationSource {
   @override
   Stream<GeoFix> watch() {
     return _db
-        .collection('users')
+        .collection(driverLocationsCollection)
         .doc(driverId)
         .snapshots()
         .map(_parse)
@@ -36,8 +41,8 @@ class FirestoreDriverLocationSource implements DriverLocationSource {
   }
 
   GeoFix? _parse(DocumentSnapshot<Map<String, dynamic>> snap) {
-    final loc = snap.data()?['location'];
-    if (loc is! Map) return null;
+    final loc = snap.data();
+    if (loc == null) return null;
     final lat = loc['lat'];
     final lng = loc['lng'];
     if (lat is! num || lng is! num) return null;
@@ -53,8 +58,8 @@ class FirestoreDriverLocationSource implements DriverLocationSource {
 
 /// جهة السائق: يبث الموقع إلى Firestore مع Throttle لتقليل تكلفة الكتابة.
 ///
-/// تنبيه: شاشة الكابتن الحالية (courier_dashboard) بتكتب نفس الحقل. ما تشغّلش
-/// الاتنين مع بعض لنفس السائق.
+/// شاشة الكابتن (courier_dashboard) بتستخدم نفس الـ Publisher، فمفيش مسار كتابة
+/// تاني. ما تشغّلش TrackingScreen بوضع driverSharing جنبها لنفس السائق.
 class DriverLocationPublisher {
   DriverLocationPublisher(
     this.driverId, {
@@ -105,9 +110,11 @@ class DriverLocationPublisher {
 
   void _write(_LocPayload p) {
     _writing = true;
-    _db.collection('users').doc(driverId).update({
-      'location': {'lat': p.lat, 'lng': p.lng, 'updatedAt': p.ts},
-    }).catchError((Object e) {
+    // set+merge: بيعمل الوثيقة لو مش موجودة وبيسيب `viewers` زي ما هي.
+    _db.collection(driverLocationsCollection).doc(driverId).set(
+      {'lat': p.lat, 'lng': p.lng, 'updatedAt': p.ts},
+      SetOptions(merge: true),
+    ).catchError((Object e) {
       debugPrint('driver location publish failed: $e');
     }).whenComplete(() {
       _writing = false;
@@ -115,6 +122,25 @@ class DriverLocationPublisher {
       _queued = null;
       if (q != null && !_closed) _write(q);
     });
+  }
+
+  /// يحدد مين يقدر يشوف موقع الكابتن (معرّفات العملاء). القائمة بتستبدل القديمة
+  /// بالكامل. بيرجّع false لو فشل أو اتأخر (أوفلاين) عشان المتصل يعيد المحاولة.
+  Future<bool> setViewers(Iterable<String> customerIds) async {
+    if (_closed) return false;
+    final ids = customerIds.where((e) => e.isNotEmpty).toSet().toList()..sort();
+    try {
+      await _db
+          .collection(driverLocationsCollection)
+          .doc(driverId)
+          .set({'viewers': ids}, SetOptions(merge: true))
+          // أوفلاين: الكتابة بتتأجل في طابور Firestore ومبتكملش، فمش هنستناها.
+          .timeout(const Duration(seconds: 10));
+      return true;
+    } catch (e) {
+      debugPrint('driver viewers update failed: $e');
+      return false;
+    }
   }
 
   /// يوقف أي كتابة جديدة (بيتنادى من TrackingController.dispose).

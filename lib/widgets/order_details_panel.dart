@@ -153,7 +153,9 @@ class OrderDetailsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final o = order;
-    final pickupHasRealPlace = (o.pickup.lat != 0 || o.pickup.lng != 0);
+    // الصيدلية مالهاش إحداثيات (0,0) لكن نص "صيدلية" لسه بيتعرض للكابتن.
+    final pickupHasRealPlace = (o.pickup.lat != 0 || o.pickup.lng != 0) ||
+        o.category == OrderCategory.pharmacy;
     final from = (o.restaurantName != null && o.restaurantName!.isNotEmpty)
         ? [o.restaurantName!, if ((o.pickup.villageName ?? '').isNotEmpty && o.restaurantId != null) o.pickup.villageName!].join(' — ')
         : (pickupHasRealPlace ? _placeText(o.pickup) : '');
