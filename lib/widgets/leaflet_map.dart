@@ -14,6 +14,10 @@ class WasalhaMap extends StatefulWidget {
   final List<ll.LatLng> routeGeometry; // [lat, lng] نفس الأصل
   final List<ll.LatLng>? fitPoints; // مكافئ MapAutoFit
   final bool showControls;
+
+  /// true: الكاميرا بتتبع [center] (موقع الكابتن) لما مفيش fitPoints،
+  /// طالما المستخدم مش بيحرّك الخريطة بإيده.
+  final bool followCenter;
   const WasalhaMap({
     super.key,
     required this.center,
@@ -22,6 +26,7 @@ class WasalhaMap extends StatefulWidget {
     this.routeGeometry = const [],
     this.fitPoints,
     this.showControls = false, // أزرار التكبير: اختيارية ومقفولة افتراضياً
+    this.followCenter = false,
   });
 
   @override
@@ -31,6 +36,7 @@ class WasalhaMap extends StatefulWidget {
 class _WasalhaMapState extends State<WasalhaMap> {
   final MapController _controller = MapController();
   bool _ready = false;
+  bool _userMoved = false;
   String? _fitKey;
 
   // مفتاح الوجهة: بنعيد ضبط الكاميرا بس لما الوجهة تتغير، مش مع كل تحديث
@@ -49,6 +55,16 @@ class _WasalhaMapState extends State<WasalhaMap> {
     super.didUpdateWidget(old);
     final k = _keyFor(widget.fitPoints);
     if (_ready && k != null && k != _fitKey) _fit();
+    if (_ready &&
+        widget.followCenter &&
+        !_userMoved &&
+        (widget.fitPoints == null || widget.fitPoints!.length < 2) &&
+        (old.center.latitude != widget.center.latitude ||
+            old.center.longitude != widget.center.longitude)) {
+      try {
+        _controller.move(widget.center, _controller.camera.zoom);
+      } catch (_) {}
+    }
   }
 
   void _fit() {
@@ -69,6 +85,7 @@ class _WasalhaMapState extends State<WasalhaMap> {
   }
 
   void _recenter() {
+    _userMoved = false;
     final pts = widget.fitPoints;
     if (pts != null && pts.length >= 2) {
       _fit();
@@ -112,6 +129,9 @@ class _WasalhaMapState extends State<WasalhaMap> {
             onMapReady: () {
               _ready = true;
               _fit();
+            },
+            onPositionChanged: (cam, hasGesture) {
+              if (hasGesture) _userMoved = true;
             },
             interactionOptions: const InteractionOptions(
               flags: InteractiveFlag.all & ~InteractiveFlag.rotate,

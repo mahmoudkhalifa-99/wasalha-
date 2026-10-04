@@ -24,6 +24,21 @@ class LocationSearchResult {
 }
 
 /// Abstraction مستقلة عن أي مزوّد. الـ Widgets والـ Controllers بتعتمد عليها بس.
+/// تفاصيل المكان الفعلي من الـ Reverse Geocoding (بدون أي ربط بقوائم التطبيق).
+class PlaceDetails {
+  const PlaceDetails({this.locality, this.area, this.road, this.full});
+
+  /// اسم القرية/الحي/المدينة (مثال: طملاي).
+  final String? locality;
+
+  /// المركز/المنطقة الأكبر (مثال: مركز منوف).
+  final String? area;
+  final String? road;
+
+  /// عنوان مختصر جاهز للعرض.
+  final String? full;
+}
+
 abstract class GeocodingService {
   /// عنوان مفهوم للنقطة، أو null لو مش متاح/فشل (الفشل مبيرميش استثناء).
   Future<String?> reverseGeocode(LatLng location);
@@ -70,6 +85,7 @@ class NominatimGeocodingService implements GeocodingService {
   final LinkedHashMap<String, List<LocationSearchResult>> _searchCache =
       LinkedHashMap();
   final Map<String, Future<String?>> _inflightReverse = {};
+  final LinkedHashMap<String, PlaceDetails> _detailsCache = LinkedHashMap();
 
   Future<void> _tail = Future<void>.value();
   DateTime? _lastStart;
@@ -120,12 +136,45 @@ class NominatimGeocodingService implements GeocodingService {
       final json = jsonDecode(body);
       if (json is! Map<String, dynamic> || json['error'] != null) return null;
       final text = formatAddress(json);
+      _put(_detailsCache, key, parseDetails(json, text));
       if (text != null) _put(_reverseCache, key, text);
       return text;
     } catch (e) {
       debugPrint('reverseGeocode failed: $e');
       return null;
     }
+  }
+
+  /// اسم المكان الفعلي (قرية/حي + مركز + شارع). بيستخدم نفس الكاش بتاع
+  /// [reverseGeocode] فلو النقطة اتطلبت قبل كده مفيش طلب شبكة جديد.
+  /// بيرجّع null لو فشل (مبيرميش استثناء).
+  Future<PlaceDetails?> reverseDetails(LatLng location) async {
+    final key = _key(location);
+    var d = _detailsCache[key];
+    if (d != null) return d;
+    await reverseGeocode(location);
+    d = _detailsCache[key];
+    return d;
+  }
+
+  static PlaceDetails parseDetails(Map<String, dynamic> json, String? full) {
+    final a = json['address'];
+    String? pick(List<String> keys) {
+      if (a is! Map) return null;
+      for (final k in keys) {
+        final v = a[k];
+        if (v is String && v.trim().isNotEmpty) return v.trim();
+      }
+      return null;
+    }
+
+    return PlaceDetails(
+      locality: pick(['village', 'hamlet', 'suburb', 'neighbourhood',
+        'quarter', 'town', 'city', 'municipality']),
+      area: pick(['county', 'state_district', 'city_district', 'city']),
+      road: pick(['road', 'pedestrian', 'footway', 'residential', 'path']),
+      full: full,
+    );
   }
 
   // ---------------- search ----------------

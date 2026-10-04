@@ -1098,6 +1098,8 @@ class _CourierDashboardState extends State<CourierDashboard> {
                       : customerHomeMarker(ll.LatLng(dest.lat, dest.lng)),
               ],
               routeGeometry: _routeGeometry,
+              showControls: true,
+              followCenter: true,
               fitPoints: dest == null
                   ? null
                   : [_currentLocation, ll.LatLng(dest.lat, dest.lng)],

@@ -22,7 +22,6 @@ import '../utils.dart' as utils;
 import '../widgets/common.dart';
 import '../widgets/leaflet_map.dart';
 import '../widgets/map_location_picker.dart';
-import '../features/tracking/models/selected_location.dart';
 import 'activity_view.dart';
 import 'profile_view.dart';
 import 'wallet_view.dart';
@@ -51,8 +50,11 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   Village? _dropoffVillage;
   final _dropoffNoteCtrl = TextEditingController();
   // نقطة دقيقة اختارها العميل (موقعي الحالي / من الخريطة). null = مركز القرية.
-  SelectedLocation? _dropoffPoint;
-  SelectedLocation? _pickupPoint;
+  PickedPlace? _dropoffPoint;
+  PickedPlace? _pickupPoint;
+
+  bool get _hasPickup => _pickupVillage != null || _pickupPoint != null;
+  bool get _hasDropoff => _dropoffVillage != null || _dropoffPoint != null;
 
   List<Restaurant> _restaurants = [];
   List<Ad> _ads = [];
@@ -259,19 +261,23 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   }
 
   Future<void> _recalcDistance() async {
+    if (!_hasPickup || !_hasDropoff) return;
     final p = _pickupVillage, d = _dropoffVillage;
-    if (p == null || d == null) return;
-    if (p.id == d.id && _pickupPoint == null && _dropoffPoint == null) {
+    if (p != null &&
+        d != null &&
+        p.id == d.id &&
+        _pickupPoint == null &&
+        _dropoffPoint == null) {
       setState(() => _actualRoadDist = 0);
       return;
     }
     setState(() => _isCalculatingDist = true);
     try {
       final res = await utils.getRoadDistance(
-          _pickupPoint?.latitude ?? p.center.lat,
-          _pickupPoint?.longitude ?? p.center.lng,
-          _dropoffPoint?.latitude ?? d.center.lat,
-          _dropoffPoint?.longitude ?? d.center.lng);
+          _pickupPoint?.latitude ?? p!.center.lat,
+          _pickupPoint?.longitude ?? p!.center.lng,
+          _dropoffPoint?.latitude ?? d!.center.lat,
+          _dropoffPoint?.longitude ?? d!.center.lng);
       if (!mounted) return;
       setState(() {
         _actualRoadDist = res.distance;
@@ -298,36 +304,33 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     _recalcDistance();
   }
 
-  /// نقطة اتحددت بالخريطة/الـ GPS: بنحفظها بدقتها، وبنختار أقرب قرية
-  /// تلقائيًا عشان التسعير والمسافة يفضلوا شغالين.
-  void _onDropoffPicked(SelectedLocation sel) {
-    final n = nearestVillage(sel.latLng);
+  /// مكان اتحدد بالخريطة/الـ GPS: بنحفظه باسمه الفعلي. لو اسمه مطابق تمامًا
+  /// لقرية في القائمة بنختارها، غير كده القرية بتتفضى والاسم الحقيقي
+  /// (مثلاً "طملاي") هو اللي بيتعرض ويتخزّن في الطلب.
+  void _onDropoffPicked(PickedPlace pl) {
     setState(() {
-      _dropoffPoint = sel;
-      if (n != null) {
-        _dropoffDistrict = n.district;
-        _dropoffVillage = n.village;
-      }
+      _dropoffPoint = pl;
+      _dropoffDistrict = pl.knownMatch?.district;
+      _dropoffVillage = pl.knownMatch?.village;
     });
     _recalcDistance();
   }
 
-  void _onPickupPicked(SelectedLocation sel) {
-    final n = nearestVillage(sel.latLng);
+  void _onPickupPicked(PickedPlace pl) {
     setState(() {
-      _pickupPoint = sel;
-      if (n != null) {
-        _pickupDistrict = n.district;
-        _pickupVillage = n.village;
-      }
+      _pickupPoint = pl;
+      _pickupDistrict = pl.knownMatch?.district;
+      _pickupVillage = pl.knownMatch?.village;
     });
     _recalcDistance();
   }
 
   double get _estimatedPrice {
+    if (!_hasPickup || !_hasDropoff) return 0;
     final p = _pickupVillage, d = _dropoffVillage;
-    if (p == null || d == null) return 0;
-    if (p.id == d.id) return configDefaultPricing.sameVillagePrice;
+    if (p != null && d != null && p.id == d.id) {
+      return configDefaultPricing.sameVillagePrice;
+    }
     final baseFare =
         configDefaultPricing.basePrice + (_actualRoadDist * configDefaultPricing.pricePerKm);
     final multiplier = configDefaultPricing.multipliers[_selectedVehicle] ?? 1.0;
@@ -374,8 +377,11 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     List<CartItem>? foodItems,
     String? prescriptionImage,
   }) async {
+    // من شاشة المطعم بيجي deliveryVillage؛ غير كده بنستخدم اللي اختاره العميل
+    // (قرية من القائمة أو مكان فعلي من الخريطة/الـ GPS).
+    final dp = deliveryVillage == null ? _dropoffPoint : null;
     final finalVillage = deliveryVillage ?? _dropoffVillage;
-    if (finalVillage == null) {
+    if (finalVillage == null && dp == null) {
       showAppAlert(context, 'يرجى تحديد مكان التوصيل');
       return;
     }
@@ -384,19 +390,30 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       final orderPrice = price ?? _estimatedPrice;
       final pp = _pickupPoint;
       final orderPickup = (_selectedCategory == OrderCategory.taxi &&
-              _pickupVillage != null)
-          ? OrderPlace(
-              address: pp != null
-                  ? '${_pickupVillage!.name} - ${pp.address}'
-                  : _pickupVillage!.name,
-              lat: pp?.latitude ?? _pickupVillage!.center.lat,
-              lng: pp?.longitude ?? _pickupVillage!.center.lng,
-              villageName: _pickupVillage!.name)
+              (pp != null || _pickupVillage != null))
+          ? (pp != null
+              ? OrderPlace(
+                  address: pp.displayText,
+                  lat: pp.latitude,
+                  lng: pp.longitude,
+                  villageName: pp.placeName)
+              : OrderPlace(
+                  address: _pickupVillage!.name,
+                  lat: _pickupVillage!.center.lat,
+                  lng: _pickupVillage!.center.lng,
+                  villageName: _pickupVillage!.name))
           : pickup;
-      // النقطة الدقيقة بتتطبّق بس لو القرية لسه هي المختارة (مش قرية جاية من المنيو).
-      final dp = (_dropoffPoint != null && finalVillage.id == _dropoffVillage?.id)
-          ? _dropoffPoint
-          : null;
+      final dropPlace = dp != null
+          ? OrderPlace(
+              address: dp.displayText,
+              lat: dp.latitude,
+              lng: dp.longitude,
+              villageName: dp.placeName)
+          : OrderPlace(
+              address: finalVillage!.name,
+              lat: finalVillage.center.lat,
+              lng: finalVillage.center.lng,
+              villageName: finalVillage.name);
 
       final orderData = <String, dynamic>{
         'customerId': user.id,
@@ -404,14 +421,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         'category': _selectedCategory.value,
         'paymentMethod': PaymentMethod.cash.value,
         'pickup': orderPickup?.toMap(),
-        'dropoff': OrderPlace(
-                address: dp != null
-                    ? '${finalVillage.name} - ${dp.address}'
-                    : finalVillage.name,
-                lat: dp?.latitude ?? finalVillage.center.lat,
-                lng: dp?.longitude ?? finalVillage.center.lng,
-                villageName: finalVillage.name)
-            .toMap(),
+        'dropoff': dropPlace.toMap(),
         'requestedVehicleType': _selectedVehicle.value,
         'price': orderPrice,
         'distance': distance ?? _actualRoadDist,
@@ -430,7 +440,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         userId: UserRole.driver.value,
         title: 'طلب جديد 🛵',
         body:
-            '${orderPickup?.villageName ?? "مشوار"} ← ${finalVillage.name} • ${orderPrice.toInt()} ج.م',
+            '${orderPickup?.villageName ?? "مشوار"} ← ${dropPlace.villageName} • ${orderPrice.toInt()} ج.م',
         type: 'ALERT',
         key: 'order_$newOrderId',
         orderId: newOrderId,
@@ -823,14 +833,16 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
           _dropoffPoint = null;
         }),
         addressNoteCtrl: _dropoffNoteCtrl,
-        pickedAddress: _dropoffPoint?.address,
+        pickedAddress: _dropoffPoint?.displayText,
+        customPlaceName: _dropoffPoint?.placeName,
+        customArea: _dropoffPoint?.area,
         onPickedOnMap: _onDropoffPicked,
       ),
       const SizedBox(height: 24),
       PressScale(
         onTap: (_isSubmitting ||
                 (_pharmacyNoteCtrl.text.isEmpty && _prescriptionImage == null) ||
-                _dropoffVillage == null)
+                !_hasDropoff)
             ? null
             : () => _handleCreateOrder(
                 specialRequest: _pharmacyNoteCtrl.text,
@@ -1006,7 +1018,9 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         onSelectDistrict: (d) => setState(() => _pickupDistrict = d),
         onSelectVillage: _onPickupVillageChanged,
         addressNoteCtrl: _pickupNoteCtrl,
-        pickedAddress: _pickupPoint?.address,
+        pickedAddress: _pickupPoint?.displayText,
+        customPlaceName: _pickupPoint?.placeName,
+        customArea: _pickupPoint?.area,
         onPickedOnMap: _onPickupPicked,
       ),
       const SizedBox(height: 20),
@@ -1020,7 +1034,9 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         onSelectDistrict: (d) => setState(() => _dropoffDistrict = d),
         onSelectVillage: _onDropoffVillageChanged,
         addressNoteCtrl: _dropoffNoteCtrl,
-        pickedAddress: _dropoffPoint?.address,
+        pickedAddress: _dropoffPoint?.displayText,
+        customPlaceName: _dropoffPoint?.placeName,
+        customArea: _dropoffPoint?.area,
         onPickedOnMap: _onDropoffPicked,
       ),
       const SizedBox(height: 20),
@@ -1031,16 +1047,15 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       ),
       const SizedBox(height: 8),
       _vehicleSelector(),
-      if (_pickupVillage != null && _dropoffVillage != null) ...[
+      if (_hasPickup && _hasDropoff) ...[
         const SizedBox(height: 20),
         _priceEstimateCard(),
       ],
       const SizedBox(height: 24),
       PressScale(
         onTap: (_isSubmitting ||
-                _dropoffVillage == null ||
-                (_selectedCategory == OrderCategory.taxi &&
-                    _pickupVillage == null) ||
+                !_hasDropoff ||
+                (_selectedCategory == OrderCategory.taxi && !_hasPickup) ||
                 _isCalculatingDist)
             ? null
             : () => _handleCreateOrder(),
@@ -2091,10 +2106,14 @@ class LocationSelector extends StatefulWidget {
   final bool minimal;
 
   /// لو اتحدد: بيظهر زرّين (موقعي الحالي / من الخريطة) والنتيجة بترجع هنا.
-  final void Function(SelectedLocation)? onPickedOnMap;
+  final void Function(PickedPlace)? onPickedOnMap;
 
   /// عنوان النقطة المختارة (للعرض تحت الأزرار).
   final String? pickedAddress;
+
+  /// اسم المكان الفعلي لو مش موجود في القوائم (بيظهر مكان اسم القرية).
+  final String? customPlaceName;
+  final String? customArea;
 
   const LocationSelector({
     super.key,
@@ -2110,6 +2129,8 @@ class LocationSelector extends StatefulWidget {
     this.minimal = false,
     this.onPickedOnMap,
     this.pickedAddress,
+    this.customPlaceName,
+    this.customArea,
   });
 
   @override
@@ -2127,8 +2148,8 @@ class _LocationSelectorState extends State<LocationSelector> {
     try {
       final r = await fetchCurrentLocation();
       if (!mounted) return;
-      if (r.location != null) {
-        widget.onPickedOnMap?.call(r.location!);
+      if (r.place != null) {
+        widget.onPickedOnMap?.call(r.place!);
       } else {
         showAppAlert(context, r.error ?? 'تعذّر تحديد موقعك');
       }
@@ -2313,7 +2334,9 @@ class _LocationSelectorState extends State<LocationSelector> {
             children: [
               Expanded(
                 child: _dropdownButton(
-                  text: widget.selectedVillage?.name ?? 'اختر القرية',
+                  text: widget.selectedVillage?.name ??
+                      widget.customPlaceName ??
+                      'اختر القرية',
                   enabled: widget.selectedDistrict != null,
                   open: _showVillages,
                   onTap: widget.selectedDistrict == null
@@ -2330,7 +2353,9 @@ class _LocationSelectorState extends State<LocationSelector> {
               const SizedBox(width: 12),
               Expanded(
                 child: _dropdownButton(
-                  text: widget.selectedDistrict?.name ?? 'اختر المركز',
+                  text: widget.selectedDistrict?.name ??
+                      widget.customArea ??
+                      'اختر المركز',
                   enabled: true,
                   open: _showDistricts,
                   onTap: () {
