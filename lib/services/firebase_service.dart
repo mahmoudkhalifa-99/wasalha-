@@ -57,6 +57,22 @@ String friendlyError(Object e) {
   }
   if (t.contains('permission-denied')) {
     t = 'مفيش صلاحية لتنفيذ العملية (راجع قواعد Firestore)';
+  } else if (t.contains('firebase_storage/object-not-found') ||
+      t.contains('firebase_storage/bucket-not-found') ||
+      t.contains('firebase_storage/project-not-found')) {
+    // الرسالة الأصلية ("No object exists...") مضللة: في الرفع معناها غالبًا إن
+    // الـ bucket نفسه مش موجود/مش مفعّل، مش إن ملف ناقص.
+    t = 'تعذّر رفع الصورة: خدمة تخزين الصور (Firebase Storage) غير مفعّلة أو '
+        'مش متاحة للمشروع. تواصل مع الإدارة. (firebase_storage/object-not-found)';
+  } else if (t.contains('firebase_storage/unauthorized')) {
+    t = 'مفيش صلاحية لرفع الصورة (راجع قواعد Storage). (firebase_storage/unauthorized)';
+  } else if (t.contains('firebase_storage/unauthenticated')) {
+    t = 'سجّل الدخول من جديد وحاول تاني. (firebase_storage/unauthenticated)';
+  } else if (t.contains('firebase_storage/retry-limit-exceeded') ||
+      t.contains('firebase_storage/canceled')) {
+    t = 'الاتصال ضعيف وفشل رفع الصورة، حاول تاني.';
+  } else if (t.contains('firebase_storage/quota-exceeded')) {
+    t = 'تم تجاوز حصة التخزين المتاحة للمشروع. تواصل مع الإدارة. (firebase_storage/quota-exceeded)';
   }
   return t;
 }
