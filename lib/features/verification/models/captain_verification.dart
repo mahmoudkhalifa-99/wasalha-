@@ -137,12 +137,16 @@ class ReviewInfo {
   final int reviewedAt;
   final List<String> correctionDocs;
 
+  /// بنود الفحص اللي المراجع أكدها وقت الاعتماد (review_checklist.dart).
+  final List<String> checklist;
+
   const ReviewInfo({
     required this.decision,
     required this.reason,
     required this.reviewerId,
     required this.reviewedAt,
     this.correctionDocs = const [],
+    this.checklist = const [],
   });
 
   static ReviewInfo? fromMap(Object? m) {
@@ -155,6 +159,9 @@ class ReviewInfo {
       correctionDocs: [
         for (final d in (m['correctionDocs'] as List? ?? const [])) d.toString()
       ],
+      checklist: [
+        for (final d in (m['checklist'] as List? ?? const [])) d.toString()
+      ],
     );
   }
 
@@ -164,6 +171,7 @@ class ReviewInfo {
         'reviewerId': reviewerId,
         'reviewedAt': reviewedAt,
         'correctionDocs': correctionDocs,
+        if (checklist.isNotEmpty) 'checklist': checklist,
       };
 }
 

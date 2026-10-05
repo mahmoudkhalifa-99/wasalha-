@@ -10,6 +10,7 @@ import '../../../theme/app_colors.dart';
 import '../../../theme/app_text.dart';
 import '../data/verification_repository.dart';
 import '../domain/document_requirements.dart';
+import '../domain/review_checklist.dart';
 import '../domain/national_id.dart';
 import '../domain/unique_keys.dart';
 import '../domain/verification_enums.dart';
@@ -255,7 +256,9 @@ class _CaptainDetailState extends State<_CaptainDetail> {
   Future<void> _decide(CaptainVerification v, ReviewDecision d) async {
     final reasonCtrl = TextEditingController();
     final flagged = <DocType>{};
-    var confirmed = false;
+    final items = checklistFor(
+        needsVehicleDocs: _vehicleType() != null && vehicleNeedsLicenseData(_vehicleType()));
+    final checked = <String>{};
     final needsReason = d != ReviewDecision.approve && d != ReviewDecision.reactivate;
     final ok = await showDialog<bool>(
       context: context,
@@ -279,13 +282,18 @@ class _CaptainDetailState extends State<_CaptainDetail> {
                     if (v.serverFlags.any(kBlockingServerFlags.contains))
                       Text('تحذير: يوجد تكرار في بيانات الهوية. الكابتن لن يستقبل طلبات حتى لو اعتمدته.',
                           style: T.s(12, T.w900, C.rose500)),
-                    CheckboxListTile(
-                      contentPadding: EdgeInsets.zero,
-                      value: confirmed,
-                      onChanged: (b) => setD(() => confirmed = b ?? false),
-                      title: Text('راجعت الصور بنفسي وقارنتها بالبيانات المدخلة (الفحص الآلي مساعد فقط)',
-                          style: T.s(12, T.w700, C.slate800)),
-                    ),
+                    Text('أكّد كل بند بعد ما تقارن البيانات المُدخلة بالمستندات (الفحص الآلي مساعد فقط):',
+                        style: T.s(12, T.w900, C.slate800)),
+                    for (final it in items)
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        value: checked.contains(it.key),
+                        onChanged: (b) => setD(() => b == true ? checked.add(it.key) : checked.remove(it.key)),
+                        title: Text(it.label, style: T.s(12, T.w700, C.slate800)),
+                      ),
+                    if (!checklistComplete(items, checked))
+                      Text('الاعتماد يتفعّل بعد تأكيد كل البنود.', style: T.s(11, T.w700, C.slate500)),
                   ],
                   if (d == ReviewDecision.needsCorrection || d == ReviewDecision.reject) ...[
                     Text('المستندات المطلوب إعادتها (اختياري):', style: T.s(12, T.w900, C.slate800)),
@@ -317,7 +325,7 @@ class _CaptainDetailState extends State<_CaptainDetail> {
               TextButton(
                 onPressed: () {
                   if (needsReason && reasonCtrl.text.trim().length < 3) return;
-                  if (d == ReviewDecision.approve && !confirmed) return;
+                  if (d == ReviewDecision.approve && !checklistComplete(items, checked)) return;
                   Navigator.pop(c, true);
                 },
                 child: const Text('تأكيد'),
@@ -338,6 +346,7 @@ class _CaptainDetailState extends State<_CaptainDetail> {
         decision: d,
         reason: reason,
         correctionDocs: flagged.toList(),
+        checklist: d == ReviewDecision.approve ? items.where((i) => checked.contains(i.key)).map((i) => i.key).toList() : const [],
       );
     } catch (e) {
       if (mounted) {
@@ -373,6 +382,7 @@ class _CaptainDetailState extends State<_CaptainDetail> {
                   children: [
                     _header(v),
                     _section('بيانات الكابتن', _dataSection(v)),
+                    _section('مقارنة البيانات بالمستندات', _compare(v)),
                     _section('الهوية والسيلفي', _docGrid(v, [
                       DocType.idFront, DocType.idBack, DocType.selfieWithId, DocType.poseRight, DocType.poseLeft,
                     ])),
@@ -587,6 +597,167 @@ class _CaptainDetailState extends State<_CaptainDetail> {
             'ملاحظة: OCR ومطابقة الوجه والـ Liveness غير متاحة بالتبعيات الحالية، وفحص الصور لا يثبت أصالة المستند ولا يكتشف التزوير. القرار مسؤولية المراجع.',
             style: T.s(11, T.w700, C.slate500, height: 1.6)),
       ],
+    );
+  }
+
+
+  // ───────── مقارنة جنب بعض: البيانات المُدخلة ↔ المستند ─────────
+  Widget _compare(CaptainVerification v) {
+    final info = parseNationalId(v.nationalId);
+    final vt = _vehicleType();
+    final needsVehicle = vt != null && vehicleNeedsLicenseData(vt);
+    final licExp = v.currentDoc(DocType.drivingLicense)?.expiryDate;
+    final vlicExp = v.currentDoc(DocType.vehicleLicense)?.expiryDate;
+    final df = intl.DateFormat('yyyy/MM/dd');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('قارن كل بيان بالصورة اللي جنبه، وبعدها أكّد البنود عند الاعتماد.',
+            style: T.s(11, T.w700, C.slate500)),
+        const SizedBox(height: 10),
+        _cmpBlock(
+          '١) الهوية',
+          [
+            _cmpKv('الاسم المُدخل', v.fullName),
+            _cmpKv('الرقم القومي', _showNid ? v.nationalId : maskNationalId(v.nationalId)),
+            if (info != null) ...[
+              _cmpKv('الميلاد (من الرقم)', df.format(info.birthDate)),
+              _cmpKv('النوع (من الرقم)', info.isMale ? 'ذكر' : 'أنثى'),
+              _cmpKv('العمر', '${ageOn(info.birthDate, DateTime.now())} سنة'),
+            ] else
+              _cmpKv('الرقم القومي', 'شكله غير صحيح', color: C.rose500),
+            TextButton(
+              onPressed: () => setState(() => _showNid = !_showNid),
+              child: Text(_showNid ? 'إخفاء الرقم القومي' : 'إظهار الرقم القومي'),
+            ),
+          ],
+          v,
+          [DocType.idFront, DocType.idBack],
+        ),
+        _cmpBlock(
+          '٢) الوجه',
+          [
+            Text('قارن وجه البطاقة بالسيلفي ووضعيتي الوجه (يمين/يسار).',
+                style: T.s(12, T.w700, C.slate800, height: 1.5)),
+          ],
+          v,
+          [DocType.idFront, DocType.selfieWithId, DocType.poseRight, DocType.poseLeft],
+        ),
+        if (needsVehicle) ...[
+          _cmpBlock(
+            '٣) رخصة القيادة',
+            [
+              _cmpKv('رقم الرخصة المُدخل', v.licenseNumber),
+              if (licExp != null) _cmpKv('ينتهي', '${df.format(licExp)}  ${_expiryLabel(licExp)}'),
+            ],
+            v,
+            [DocType.drivingLicense],
+          ),
+          _cmpBlock(
+            '٤) المركبة',
+            [
+              _cmpKv('رقم اللوحة المُدخل', v.plateNumber),
+              _cmpKv('نوع المركبة', _vehicleType()?.value ?? ''),
+              if (vlicExp != null) _cmpKv('رخصة المركبة تنتهي', '${df.format(vlicExp)}  ${_expiryLabel(vlicExp)}'),
+            ],
+            v,
+            [DocType.vehicleLicense, DocType.vehiclePhoto],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _cmpKv(String k, String val, {Color? color}) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(k, style: T.s(10, T.w900, C.slate500)),
+            Text(val.isEmpty ? '—' : val, style: T.s(13, T.w900, color ?? C.slate900)),
+          ],
+        ),
+      );
+
+  Widget _cmpBlock(String title, List<Widget> data, CaptainVerification v, List<DocType> docs) {
+    final images = Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [for (final t in docs) _miniThumb(v, t)],
+    );
+    final dataCol = Column(crossAxisAlignment: CrossAxisAlignment.start, children: data);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: C.slate50,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: C.slate200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(title, style: T.s(12, T.w900, C.slate800)),
+          const SizedBox(height: 8),
+          LayoutBuilder(
+            builder: (c, box) => box.maxWidth >= 520
+                ? Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: dataCol),
+                      const SizedBox(width: 12),
+                      Expanded(child: images),
+                    ],
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [dataCol, const SizedBox(height: 6), images],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _miniThumb(CaptainVerification v, DocType t) {
+    final d = v.currentDoc(t);
+    return SizedBox(
+      width: 130,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          AspectRatio(
+            aspectRatio: 1.3,
+            child: d == null
+                ? Container(
+                    decoration: BoxDecoration(color: C.slate100, borderRadius: BorderRadius.circular(10)),
+                    child: Center(child: Text('غير مرفوع', style: T.s(10, T.w900, C.rose500))),
+                  )
+                : GestureDetector(
+                    onTap: () => _openFull(d.path, kDocLabels[t]!),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: FutureBuilder<Uint8List?>(
+                        future: _img(d.path),
+                        builder: (c, s) {
+                          if (s.connectionState != ConnectionState.done) {
+                            return const ColoredBox(
+                                color: C.slate100,
+                                child: Center(child: CircularProgressIndicator(strokeWidth: 2)));
+                          }
+                          if (s.data == null) {
+                            return const ColoredBox(color: C.slate100, child: Center(child: Text('تعذر التحميل')));
+                          }
+                          return Image.memory(s.data!, fit: BoxFit.cover);
+                        },
+                      ),
+                    ),
+                  ),
+          ),
+          const SizedBox(height: 3),
+          Text(kDocLabels[t]!, textAlign: TextAlign.center, style: T.s(10, T.w900, C.slate800)),
+        ],
+      ),
     );
   }
 

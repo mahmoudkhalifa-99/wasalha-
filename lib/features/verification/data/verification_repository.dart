@@ -280,6 +280,7 @@ class VerificationRepository {
     required ReviewDecision decision,
     String reason = '',
     List<DocType> correctionDocs = const [],
+    List<String> checklist = const [],
   }) async {
     final to = switch (decision) {
       ReviewDecision.approve => VerificationStatus.verified,
@@ -306,6 +307,7 @@ class VerificationRepository {
         reviewerId: adminId,
         reviewedAt: now,
         correctionDocs: [for (final d in correctionDocs) d.value],
+        checklist: checklist,
       ).toMap(),
       'updatedAt': now,
     };
