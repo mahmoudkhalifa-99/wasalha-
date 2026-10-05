@@ -30,6 +30,35 @@ Future<String?> verificationBlockMessage(String uid) async {
   }
 }
 
+/// الكباتن اللي اتعرضتلهم شاشة التوثيق تلقائيًا في الجلسة دي (مرة لكل حساب،
+/// عشان ميتفتحش تاني كل ما الشاشة تتبني من جديد).
+final Set<String> _autoPrompted = <String>{};
+
+/// بيفتح شاشة التوثيق أول ما الكابتن يدخل حسابه لو التوثيق لسه ناقص
+/// (ما بدأش / ناقص / محتاج تصحيح / منتهي). لو قيد المراجعة أو موثّق أو
+/// مرفوض أو معلّق مفيش حاجة بتتفتح. الكابتن يقدر يرجع منها عادي.
+Future<void> promptVerificationIfNeeded(BuildContext context, AppUser user) async {
+  if (!_autoPrompted.add(user.id)) return;
+  try {
+    final v = await _repo.watch(user.id).first.timeout(const Duration(seconds: 8));
+    final status = v?.status ?? VerificationStatus.notStarted;
+    const needs = {
+      VerificationStatus.notStarted,
+      VerificationStatus.incomplete,
+      VerificationStatus.needsCorrection,
+      VerificationStatus.expired,
+    };
+    if (!needs.contains(status)) return;
+    if (!context.mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => CaptainVerificationScreen(user: user)),
+    );
+  } catch (_) {
+    // فشل القراءة: نسمح بمحاولة تانية في المرة الجاية بدل ما نعلّم إنه اتعرض.
+    _autoPrompted.remove(user.id);
+  }
+}
+
 /// شريط حالة التوثيق في شاشة الكابتن. بيختفي لو كل شيء سليم.
 class VerificationBanner extends StatelessWidget {
   final AppUser user;

@@ -92,6 +92,10 @@ class _CourierDashboardState extends State<CourierDashboard> {
     _startLocationWatch();
     _listenMyOffers();
     _listenOrders();
+    // أول ما الكابتن يدخل حسابه: لو التوثيق ناقص تتفتح شاشة التوثيق علطول.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) promptVerificationIfNeeded(context, widget.user);
+    });
   }
 
   bool _onBack() {

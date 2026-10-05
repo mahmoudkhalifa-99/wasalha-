@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' as intl;
 
 import '../../../models/models.dart' show AppUser, VehicleType;
@@ -112,6 +113,10 @@ class CaptainVerificationScreen extends StatefulWidget {
 
 class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
   final _repo = VerificationRepository();
+  // الـ stream بيتعمل مرة واحدة. لو اتعمل جوه build كان كل إعادة بناء (فتح/قفل
+  // الكيبورد، أي حرف) بيشترك من جديد، وللحساب اللي لسه ماله مستند التوثيق
+  // (البيانات null) كان بيظهر لودينج بدل الفورم ويضيع مكان المؤشر.
+  late final Stream<CaptainVerification?> _verStream = _repo.watch(user.id);
   final _name = TextEditingController();
   final _nid = TextEditingController();
   final _license = TextEditingController();
@@ -157,16 +162,25 @@ class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
     super.dispose();
   }
 
+  /// نص + مؤشر في الآخر. (`controller.text = ...` بيسيب المؤشر في -1 فالحروف
+  /// اللي بتتكتب بعدها كانت بتتحط في أول الحقل.)
+  void _setText(TextEditingController c, String t) {
+    c.value = TextEditingValue(
+      text: t,
+      selection: TextSelection.collapsed(offset: t.length),
+    );
+  }
+
   void _seed(CaptainVerification? v) {
     if (_seeded || v == null) return;
     _seeded = true;
-    if (v.fullName.isNotEmpty) _name.text = v.fullName;
-    _nid.text = v.nationalId;
-    _license.text = v.licenseNumber;
-    if (v.plateNumber.isNotEmpty) _plate.text = v.plateNumber;
-    _gName.text = v.guarantor.name;
-    _gNid.text = v.guarantor.nationalId;
-    _gPhone.text = v.guarantor.phone;
+    if (v.fullName.isNotEmpty) _setText(_name, v.fullName);
+    _setText(_nid, v.nationalId);
+    _setText(_license, v.licenseNumber);
+    if (v.plateNumber.isNotEmpty) _setText(_plate, v.plateNumber);
+    _setText(_gName, v.guarantor.name);
+    _setText(_gNid, v.guarantor.nationalId);
+    _setText(_gPhone, v.guarantor.phone);
     _agree = v.declaration?.isCurrent ?? false;
   }
 
@@ -275,12 +289,13 @@ class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
           elevation: 0,
         ),
         body: StreamBuilder<CaptainVerification?>(
-          stream: _repo.watch(user.id),
+          stream: _verStream,
           builder: (context, snap) {
             if (snap.hasError) {
               return Center(child: Text('تعذر تحميل بيانات التوثيق', style: T.s(14, T.w900, C.rose500)));
             }
-            if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
+            // waiting = لسه ماجاش أول رد (بعدها بيبقى active حتى لو المستند null).
+            if (snap.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
             }
             final v = snap.data;
@@ -531,7 +546,11 @@ class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
   }
 
   Widget _field(TextEditingController c, String label,
-      {TextInputType? type, bool enabled = true, int? maxLength, String? hint}) {
+      {TextInputType? type,
+      bool enabled = true,
+      int? maxLength,
+      String? hint,
+      bool digitsOnly = false}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextField(
@@ -539,6 +558,11 @@ class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
         enabled: enabled,
         keyboardType: type,
         maxLength: maxLength,
+        // الأرقام بتتكتب شمال-لليمين حتى في واجهة RTL، وبتتحوّل للإنجليزي
+        // (لو الكيبورد عربي) من غير ما المؤشر يتحرك.
+        textDirection: digitsOnly ? TextDirection.ltr : null,
+        textAlign: digitsOnly ? TextAlign.right : TextAlign.start,
+        inputFormatters: digitsOnly ? [_DigitsOnlyFormatter()] : null,
         onChanged: (_) => setState(() {}),
         decoration: InputDecoration(
           labelText: label,
@@ -561,7 +585,8 @@ class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
             _emailRow(),
             const SizedBox(height: 12),
             _field(_name, 'الاسم الرباعي (كما في البطاقة)', enabled: editable),
-            _field(_nid, 'الرقم القومي (14 رقم)', type: TextInputType.number, enabled: editable, maxLength: 14),
+            _field(_nid, 'الرقم القومي (14 رقم)',
+                type: TextInputType.number, enabled: editable, maxLength: 14, digitsOnly: true),
             Container(
               padding: const EdgeInsets.all(14),
               margin: const EdgeInsets.only(bottom: 12),
@@ -600,7 +625,8 @@ class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
                 C.slate800),
             const SizedBox(height: 12),
             _field(_gName, 'اسم الضامن', enabled: editable),
-            _field(_gNid, 'الرقم القومي للضامن', type: TextInputType.number, enabled: editable, maxLength: 14),
+            _field(_gNid, 'الرقم القومي للضامن',
+                type: TextInputType.number, enabled: editable, maxLength: 14, digitsOnly: true),
             _field(_gPhone, 'هاتف الضامن', type: TextInputType.phone, enabled: editable, maxLength: 14),
           ],
         );
@@ -844,5 +870,21 @@ class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
     final blockers = _blockers(v);
     if (blockers.isNotEmpty) return setState(() => _error = 'استكمل البنود الناقصة أولًا');
     await _guard(() => _repo.submit(v));
+  }
+}
+
+/// بيسمح بالأرقام بس، وبيحوّل العربية (٠-٩) للإنجليزية، ويحافظ على مكان المؤشر.
+class _DigitsOnlyFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+    final cleaned = normalizeDigits(newValue.text);
+    if (cleaned == newValue.text) return newValue;
+    final sel = newValue.selection;
+    final cut = sel.isValid ? sel.baseOffset.clamp(0, newValue.text.length) : newValue.text.length;
+    final offset = normalizeDigits(newValue.text.substring(0, cut)).length;
+    return TextEditingValue(
+      text: cleaned,
+      selection: TextSelection.collapsed(offset: offset.clamp(0, cleaned.length)),
+    );
   }
 }
