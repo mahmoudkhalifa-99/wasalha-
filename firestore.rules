@@ -288,6 +288,23 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // صور المستندات (JPEG خاص): بتتخزّن هنا بدل Firebase Storage (محتاج Blaze).
+      // القراءة: الكابتن صاحبها أو السوبر أدمن. الإنشاء: الكابتن لنفسه فقط، من غير
+      // استبدال أو حذف (النسخ القديمة v1/v2/... بتفضل). الحجم أقل من 900 كيلو.
+      match /files/{fileId} {
+        allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+        allow create: if canWrite() && request.auth.uid == uid && myRole() == 'DRIVER'
+            && request.resource.data.keys().hasOnly(['type', 'version', 'bytes', 'size', 'contentType', 'createdAt'])
+            && request.resource.data.type in ['idFront', 'idBack', 'selfieWithId', 'poseRight', 'poseLeft',
+                                              'drivingLicense', 'vehicleLicense', 'vehiclePhoto']
+            && request.resource.data.version is int && request.resource.data.version >= 1
+            && fileId == request.resource.data.type + '_v' + string(request.resource.data.version)
+            && request.resource.data.bytes is bytes
+            && request.resource.data.bytes.size() < 900 * 1024
+            && request.resource.data.contentType == 'image/jpeg';
+        allow update, delete: if false;
+      }
+
       // سجل المراجعة: إضافة فقط. ما يتعدّلش ولا يتحذفش من أي حد (ولا من الكابتن).
       match /audit/{eid} {
         allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
