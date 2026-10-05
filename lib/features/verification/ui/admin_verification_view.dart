@@ -389,7 +389,6 @@ class _CaptainDetailState extends State<_CaptainDetail> {
                     _section('نتائج الفحص (مساعدة للمراجعة فقط)', _checks(v)),
                     if (_vehicleType() != null && vehicleNeedsLicenseData(_vehicleType()))
                       _section('مستندات المركبة', _vehicleSection(v)),
-                    _section('الضامن', _guarantor(v)),
                     _section('الإقرار الإلكتروني', _declaration(v)),
                     _section('سجل المراجعة', _audit(v)),
                     const SizedBox(height: 90),
@@ -763,15 +762,6 @@ class _CaptainDetailState extends State<_CaptainDetail> {
 
   Widget _vehicleSection(CaptainVerification v) =>
       _docGrid(v, [DocType.drivingLicense, DocType.vehicleLicense, DocType.vehiclePhoto]);
-
-  Widget _guarantor(CaptainVerification v) => Column(
-        children: [
-          _kv('الاسم', v.guarantor.name),
-          _kv('الرقم القومي', _showNid ? v.guarantor.nationalId : maskNationalId(v.guarantor.nationalId)),
-          _kv('الهاتف', v.guarantor.phone),
-          Text('بيانات للمراجعة فقط، ولا تنشئ التزامًا قانونيًا على الضامن.', style: T.s(11, T.w700, C.slate500)),
-        ],
-      );
 
   Widget _declaration(CaptainVerification v) {
     final d = v.declaration;

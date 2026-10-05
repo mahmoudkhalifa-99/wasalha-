@@ -1,17 +1,16 @@
 import 'package:intl/intl.dart' as intl;
 
-import '../../../config_constants.dart' show platformCommissionRate;
+import '../../../config_constants.dart' show platformFeePerTrip;
 import '../../../models/models.dart' show OrderStatus;
 
-/// حسابات الكباتن: عدد المشاوير والنسبة المستحقة. كل المنطق هنا نقي (من غير
+/// حسابات الكباتن: عدد المشاوير والمستحق للمنصة (رسوم ثابتة على كل مشوار). كل المنطق هنا نقي (من غير
 /// Firestore) عشان يتختبر.
 ///
 /// أساس العد: الطلب اللي حالته DELIVERED ومعيّن عليه كابتن، ووقته (`updatedAt`
 /// وقت التسليم) جوه الفترة. السعر = سعر العرض اللي العميل وافق عليه (`price`).
 
-/// النسبة الافتراضية (من الثابت العام للمنصة) بالمئة.
-double get kDefaultCommissionPercent =>
-    (platformCommissionRate * 100).roundToDouble();
+/// رسوم المشوار الافتراضية (من الثابت العام للمنصة) بالجنيه: 5 جنيه.
+double get kDefaultFeePerTrip => platformFeePerTrip;
 
 enum PeriodPreset { thisMonth, lastMonth, last30Days, custom }
 
@@ -150,14 +149,17 @@ List<CaptainStats> buildCaptainStats(Iterable<TripRow> rows, DateRange range) {
   return out;
 }
 
-/// المستحق = إجمالي الأجرة × النسبة ÷ 100، مقرّب لأقرب قرش (خانتين).
-double commissionDue(double totalFares, double percent) {
-  if (totalFares <= 0 || percent <= 0) return 0;
-  return (totalFares * percent).round() / 100;
+/// المستحق للمنصة = عدد المشاوير المكتملة × رسوم المشوار، مقرّب لأقرب قرش.
+double feeDue(int trips, double feePerTrip) {
+  if (trips <= 0 || feePerTrip <= 0) return 0;
+  return (trips * feePerTrip * 100).round() / 100;
 }
 
-/// بيحوّل نص النسبة (بيقبل الأرقام العربية و"," و"٪") لرقم من 0 لـ 100، أو null.
-double? parsePercent(String raw) {
+/// أقصى رسوم مشوار مقبولة في الإدخال (حماية من خطأ كتابة).
+const double kMaxFeePerTrip = 1000;
+
+/// بيحوّل نص المبلغ (بيقبل الأرقام العربية و"," و"ج.م") لرقم من 0 لـ [kMaxFeePerTrip]، أو null.
+double? parseFee(String raw) {
   // أي علامة سالب = إدخال غلط (مش بنحوّله لموجب بالغلط).
   if (raw.contains('-') || raw.contains('−') || raw.contains('–')) return null;
   const ar = '٠١٢٣٤٥٦٧٨٩';
@@ -174,7 +176,7 @@ double? parsePercent(String raw) {
     }
   }
   final v = double.tryParse(b.toString());
-  if (v == null || v.isNaN || v < 0 || v > 100) return null;
+  if (v == null || v.isNaN || v < 0 || v > kMaxFeePerTrip) return null;
   return v;
 }
 
@@ -183,7 +185,3 @@ String formatMoney(double v) {
   final isWhole = (v - v.roundToDouble()).abs() < 0.005;
   return intl.NumberFormat(isWhole ? '#,##0' : '#,##0.00', 'en').format(v);
 }
-
-/// نسبة بدون أصفار زايدة: 15 أو 12.5
-String formatPercent(double p) =>
-    p == p.roundToDouble() ? p.toInt().toString() : p.toString();

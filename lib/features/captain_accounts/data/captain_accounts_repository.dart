@@ -10,15 +10,15 @@ class DriverInfo {
   final String phone;
   final bool suspended;
 
-  /// النسبة المحفوظة للكابتن (بالمئة)، أو null = الافتراضية.
-  final double? commissionPercent;
+  /// رسوم المشوار المحفوظة للكابتن (جنيه)، أو null = الافتراضية (5 جنيه).
+  final double? feePerTrip;
 
   const DriverInfo({
     required this.id,
     required this.name,
     required this.phone,
     required this.suspended,
-    this.commissionPercent,
+    this.feePerTrip,
   });
 }
 
@@ -46,13 +46,13 @@ class CaptainAccountsRepository {
       for (final d in snap.docs)
         () {
           final m = d.data();
-          final cp = m['commissionPercent'];
+          final cp = m['feePerTrip'];
           return DriverInfo(
             id: d.id,
             name: (m['name'] as String?) ?? '',
             phone: (m['phone'] as String?) ?? '',
             suspended: (m['status'] as String?) == 'SUSPENDED',
-            commissionPercent: cp is num ? cp.toDouble() : null,
+            feePerTrip: cp is num ? cp.toDouble() : null,
           );
         }(),
     ];
@@ -84,9 +84,9 @@ class CaptainAccountsRepository {
     return OrdersSlice(rows, capped: snap.docs.length >= maxOrders);
   }
 
-  /// يحفظ نسبة الكابتن (بالمئة). null = يرجّعها للافتراضية.
-  Future<void> savePercent(String driverId, double? percent) =>
+  /// يحفظ رسوم مشوار الكابتن (جنيه). null = يرجّعها للافتراضية.
+  Future<void> saveFee(String driverId, double? fee) =>
       _db.collection('users').doc(driverId).update({
-        'commissionPercent': percent == null ? FieldValue.delete() : percent,
+        'feePerTrip': fee == null ? FieldValue.delete() : fee,
       });
 }

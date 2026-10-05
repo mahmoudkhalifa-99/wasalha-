@@ -1,7 +1,8 @@
 // نسخة Dart من constants.ts — نفس القيم بالظبط.
 import 'models/models.dart';
 
-const double platformCommissionRate = 0.15;
+/// رسوم المنصة الثابتة على كل مشوار مكتمل (بالجنيه). مش نسبة مئوية.
+const double platformFeePerTrip = 5;
 
 /// القائمة الشاملة والنهائية لقرى وعزب مركز أشمون (المنوفية)
 /// تم تجميعها بناءً على الوحدات المحلية لضمان التغطية الجغرافية الكاملة

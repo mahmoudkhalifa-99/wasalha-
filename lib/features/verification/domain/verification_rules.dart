@@ -56,7 +56,6 @@ class GateReason {
   static const accountSuspended = 'ACCOUNT_SUSPENDED';
   static const missingDocument = 'MISSING_DOCUMENT';
   static const documentExpired = 'DOCUMENT_EXPIRED';
-  static const missingGuarantor = 'MISSING_GUARANTOR';
   static const missingDeclaration = 'MISSING_DECLARATION';
   static const duplicateIdentity = 'DUPLICATE_IDENTITY';
 }
@@ -67,7 +66,6 @@ const Map<String, String> kGateReasonLabels = {
   GateReason.accountSuspended: 'الحساب معلّق',
   GateReason.missingDocument: 'مستند مطلوب ناقص',
   GateReason.documentExpired: 'مستند منتهي الصلاحية',
-  GateReason.missingGuarantor: 'بيانات الضامن ناقصة',
   GateReason.missingDeclaration: 'الإقرار الإلكتروني غير مسجّل',
   GateReason.duplicateIdentity: 'بيانات مكررة تحتاج مراجعة',
 };
@@ -95,7 +93,6 @@ GateResult evaluateGate({
   required UserStatus accountStatus,
   required VehicleType? vehicleType,
   required Map<DocType, DocVersion> activeDocs,
-  required Guarantor guarantor,
   required bool declarationAccepted,
   List<String> serverFlags = const [],
   required DateTime now,
@@ -124,7 +121,6 @@ GateResult evaluateGate({
       }
     }
   }
-  if (!isGuarantorComplete(guarantor)) reasons.add(GateReason.missingGuarantor);
   if (!declarationAccepted) reasons.add(GateReason.missingDeclaration);
   if (serverFlags.any(kBlockingServerFlags.contains)) {
     reasons.add(GateReason.duplicateIdentity);
@@ -139,7 +135,6 @@ bool canReceiveOrders({
   required UserStatus accountStatus,
   required VehicleType? vehicleType,
   required Map<DocType, DocVersion> activeDocs,
-  required Guarantor guarantor,
   required bool declarationAccepted,
   List<String> serverFlags = const [],
   required DateTime now,
@@ -150,20 +145,10 @@ bool canReceiveOrders({
       accountStatus: accountStatus,
       vehicleType: vehicleType,
       activeDocs: activeDocs,
-      guarantor: guarantor,
       declarationAccepted: declarationAccepted,
       serverFlags: serverFlags,
       now: now,
     ).canReceive;
-
-// ═════════════ الضامن ═════════════
-
-/// بيانات الضامن مكتملة وصالحة الشكل. إدخال البيانات لا ينشئ التزامًا قانونيًا
-/// على الضامن (ده يحتاج مستند ضمان منفصل بعد مراجعة قانونية).
-bool isGuarantorComplete(Guarantor g) =>
-    g.name.trim().length >= 3 &&
-    isValidNationalId(g.nationalId) &&
-    isValidEgyptMobile(g.phone);
 
 // ═════════════ جاهزية الإرسال ═════════════
 
@@ -175,7 +160,6 @@ List<String> submissionBlockers({
   required String licenseNumber,
   required String plateNumber,
   required Map<DocType, DocVersion> docs,
-  required Guarantor guarantor,
   required bool declarationAccepted,
   required DateTime now,
 }) {
@@ -206,7 +190,6 @@ List<String> submissionBlockers({
       }
     }
   }
-  if (!isGuarantorComplete(guarantor)) out.add('بيانات الضامن غير مكتملة');
   if (!declarationAccepted) out.add('الموافقة على الإقرار مطلوبة');
   return out;
 }

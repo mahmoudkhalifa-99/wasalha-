@@ -86,14 +86,13 @@ class VerificationRepository {
     });
   }
 
-  /// البيانات الأساسية + الضامن. بيسجّل PROFILE_CHANGED لو اتغيّر شيء بعد الحفظ الأول.
+  /// البيانات الأساسية. بيسجّل PROFILE_CHANGED لو اتغيّر شيء بعد الحفظ الأول.
   Future<void> saveProfile(
     String uid, {
     required String fullName,
     required String nationalId,
     required String licenseNumber,
     required String plateNumber,
-    required Guarantor guarantor,
     CaptainVerification? current,
   }) async {
     await ensureDoc(uid);
@@ -103,17 +102,13 @@ class VerificationRepository {
       'nationalId': normalizeDigits(nationalId),
       'licenseNumber': licenseNumber.trim(),
       'plateNumber': plateNumber.trim(),
-      'guarantor': guarantor.toMap(),
       'updatedAt': _now(),
     });
     final changed = current != null &&
         (current.fullName != fullName.trim() ||
             current.nationalId != normalizeDigits(nationalId) ||
             current.licenseNumber != licenseNumber.trim() ||
-            current.plateNumber != plateNumber.trim() ||
-            current.guarantor.nationalId != guarantor.nationalId ||
-            current.guarantor.phone != guarantor.phone ||
-            current.guarantor.name != guarantor.name);
+            current.plateNumber != plateNumber.trim());
     if (changed) {
       await _audit(b, uid, AuditAction.profileChanged, uid);
     }
@@ -207,7 +202,7 @@ class VerificationRepository {
     return acc;
   }
 
-  /// إرسال للمراجعة. القواعد بتتأكد من اكتمال المستندات والإقرار والضامن في السيرفر.
+  /// إرسال للمراجعة. القواعد بتتأكد من اكتمال المستندات والإقرار في السيرفر.
   Future<void> submit(CaptainVerification v) async {
     final from = v.status;
     final b = _db.batch();

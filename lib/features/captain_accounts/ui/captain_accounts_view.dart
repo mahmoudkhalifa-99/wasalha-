@@ -190,8 +190,8 @@ class _CaptainAccountsViewState extends State<CaptainAccountsView> {
     for (final c in cards) {
       trips += c.stats.deliveredCount;
       fares += c.stats.totalFares;
-      due += commissionDue(
-          c.stats.totalFares, c.driver?.commissionPercent ?? kDefaultCommissionPercent);
+      due += feeDue(
+          c.stats.deliveredCount, c.driver?.feePerTrip ?? kDefaultFeePerTrip);
     }
 
     final df = intl.DateFormat('yyyy/MM/dd');
@@ -211,12 +211,12 @@ class _CaptainAccountsViewState extends State<CaptainAccountsView> {
               Row(
                 children: [
                   _stat('المشاوير المكتملة', '$trips'),
+                  _stat('مكسبي (رسوم المشاوير)', '${formatMoney(due)} ج.م'),
                   _stat('إجمالي الأجرة', '${formatMoney(fares)} ج.م'),
-                  _stat('إجمالي المستحق', '${formatMoney(due)} ج.م'),
                 ],
               ),
               const SizedBox(height: 6),
-              Text('المستحق محسوب بالنسب المحفوظة لكل كابتن (الافتراضي ${formatPercent(kDefaultCommissionPercent)}٪).',
+              Text('مكسبك = عدد المشاوير المكتملة × رسوم المشوار (الافتراضي ${formatMoney(kDefaultFeePerTrip)} ج.م لكل مشوار، وممكن تعدّلها لكل كابتن).',
                   style: T.s(10, T.w700, C.slate400)),
             ],
           ),
@@ -244,7 +244,7 @@ class _CaptainAccountsViewState extends State<CaptainAccountsView> {
             ),
         const SizedBox(height: 8),
         Text(
-            'طريقة الحساب: المشوار المكتمل = طلب حالته "تم التسليم" ومعيّن عليه الكابتن، ووقت التسليم داخل الفترة. الأجرة = سعر العرض اللي وافق عليه العميل. الإلغاء بعد التعيين بيظهر للمتابعة فقط ومش داخل في الحساب.',
+            'طريقة الحساب: المشوار المكتمل = طلب حالته "تم التسليم" ومعيّن عليه الكابتن، ووقت التسليم داخل الفترة. مكسبك = عدد المشاوير المكتملة × رسوم المشوار (ثابتة، مش نسبة من الأجرة). الأجرة (للمتابعة فقط) = سعر العرض اللي وافق عليه العميل. الإلغاء بعد التعيين بيظهر للمتابعة فقط ومش داخل في الحساب.',
             style: T.s(10, T.w700, C.slate400, height: 1.6)),
       ],
     );
@@ -281,7 +281,7 @@ class _CaptainCard extends StatefulWidget {
 
 class _CaptainCardState extends State<_CaptainCard> {
   late final TextEditingController _rate;
-  late double? _saved; // النسبة المحفوظة (null = الافتراضية)
+  late double? _saved; // رسوم المشوار المحفوظة (null = الافتراضية)
   bool _open = false;
   bool _saving = false;
 
@@ -291,8 +291,8 @@ class _CaptainCardState extends State<_CaptainCard> {
   @override
   void initState() {
     super.initState();
-    _saved = _driver?.commissionPercent;
-    _rate = TextEditingController(text: formatPercent(_saved ?? kDefaultCommissionPercent));
+    _saved = _driver?.feePerTrip;
+    _rate = TextEditingController(text: formatMoney(_saved ?? kDefaultFeePerTrip));
   }
 
   @override
@@ -301,12 +301,12 @@ class _CaptainCardState extends State<_CaptainCard> {
     super.dispose();
   }
 
-  double? get _typed => parsePercent(_rate.text);
+  double? get _typed => parseFee(_rate.text);
 
   bool get _canSave {
     final t = _typed;
     if (t == null || _driver == null) return false;
-    return t != (_saved ?? kDefaultCommissionPercent);
+    return t != (_saved ?? kDefaultFeePerTrip);
   }
 
   Future<void> _save() async {
@@ -314,13 +314,13 @@ class _CaptainCardState extends State<_CaptainCard> {
     if (t == null) return;
     setState(() => _saving = true);
     try {
-      // لو النسبة = الافتراضية نشيل الحقل بدل ما نثبّتها.
-      final value = t == kDefaultCommissionPercent ? null : t;
-      await widget.repo.savePercent(widget.model.id, value);
+      // لو الرسوم = الافتراضية نشيل الحقل بدل ما نثبّتها.
+      final value = t == kDefaultFeePerTrip ? null : t;
+      await widget.repo.saveFee(widget.model.id, value);
       if (mounted) {
         setState(() => _saved = value);
         ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('تم حفظ النسبة')));
+            .showSnackBar(const SnackBar(content: Text('تم حفظ الرسوم')));
       }
     } catch (e) {
       if (mounted) {
@@ -332,22 +332,22 @@ class _CaptainCardState extends State<_CaptainCard> {
     }
   }
 
-  String _summaryText(double percent) {
+  String _summaryText(double fee) {
     final df = intl.DateFormat('yyyy/MM/dd');
     final last = widget.range.end.subtract(const Duration(days: 1));
     return 'حساب الكابتن: ${_driver?.name ?? widget.model.id}\n'
         'الفترة: ${df.format(widget.range.start)} - ${df.format(last)}\n'
         'المشاوير المكتملة: ${_stats.deliveredCount}\n'
         'إجمالي الأجرة: ${formatMoney(_stats.totalFares)} ج.م\n'
-        'النسبة: ${formatPercent(percent)}٪\n'
-        'المستحق: ${formatMoney(commissionDue(_stats.totalFares, percent))} ج.م';
+        'رسوم المشوار: ${formatMoney(fee)} ج.م\n'
+        'المستحق: ${formatMoney(feeDue(_stats.deliveredCount, fee))} ج.م';
   }
 
   @override
   Widget build(BuildContext context) {
     final typed = _typed;
-    final percent = typed ?? (_saved ?? kDefaultCommissionPercent);
-    final due = commissionDue(_stats.totalFares, percent);
+    final fee = typed ?? (_saved ?? kDefaultFeePerTrip);
+    final due = feeDue(_stats.deliveredCount, fee);
     final name = _driver?.name.isNotEmpty == true ? _driver!.name : 'كابتن غير معروف';
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -377,7 +377,7 @@ class _CaptainCardState extends State<_CaptainCard> {
                   tooltip: 'نسخ ملخص الحساب',
                   icon: const Icon(Icons.copy_rounded, size: 20),
                   onPressed: () {
-                    Clipboard.setData(ClipboardData(text: _summaryText(percent)));
+                    Clipboard.setData(ClipboardData(text: _summaryText(fee)));
                     ScaffoldMessenger.of(context)
                         .showSnackBar(const SnackBar(content: Text('تم نسخ الملخص')));
                   },
@@ -402,16 +402,16 @@ class _CaptainCardState extends State<_CaptainCard> {
             Row(
               children: [
                 SizedBox(
-                  width: 96,
+                  width: 120,
                   child: TextField(
                     controller: _rate,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     textDirection: TextDirection.ltr,
                     onChanged: (_) => setState(() {}),
                     decoration: InputDecoration(
-                      labelText: 'النسبة ٪',
+                      labelText: 'رسوم المشوار (ج.م)',
                       isDense: true,
-                      errorText: typed == null ? 'من 0 إلى 100' : null,
+                      errorText: typed == null ? 'من 0 إلى 1000' : null,
                     ),
                   ),
                 ),
@@ -420,7 +420,7 @@ class _CaptainCardState extends State<_CaptainCard> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('المستحق', style: T.s(10, T.w700, C.slate500)),
+                      Text('مكسبك من الكابتن (${_stats.deliveredCount} × ${formatMoney(fee)})', style: T.s(10, T.w700, C.slate500)),
                       Text('${formatMoney(due)} ج.م', style: T.s(16, T.w900, C.emerald700)),
                     ],
                   ),
@@ -433,7 +433,7 @@ class _CaptainCardState extends State<_CaptainCard> {
                             width: 16,
                             height: 16,
                             child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Text('حفظ النسبة'),
+                        : const Text('حفظ الرسوم'),
                   ),
               ],
             ),

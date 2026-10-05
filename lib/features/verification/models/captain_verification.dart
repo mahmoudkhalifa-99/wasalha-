@@ -62,25 +62,6 @@ class DocVersion {
       };
 }
 
-class Guarantor {
-  final String name;
-  final String nationalId;
-  final String phone;
-  const Guarantor({this.name = '', this.nationalId = '', this.phone = ''});
-
-  static Guarantor fromMap(Object? m) {
-    if (m is! Map) return const Guarantor();
-    return Guarantor(
-      name: (m['name'] as String?) ?? '',
-      nationalId: (m['nationalId'] as String?) ?? '',
-      phone: (m['phone'] as String?) ?? '',
-    );
-  }
-
-  Map<String, dynamic> toMap() =>
-      {'name': name, 'nationalId': nationalId, 'phone': phone};
-}
-
 /// مؤشرات الفحص الآلي. كلها مساعدة للمراجعة البشرية، ومحسوبة عند الكابتن
 /// (استشارية فقط، القرار الوحيد هو مراجعة الأدمن).
 class VerificationChecks {
@@ -199,7 +180,6 @@ class CaptainVerification {
   final String nationalId;
   final String licenseNumber;
   final String plateNumber;
-  final Guarantor guarantor;
   final DeclarationAcceptance? declaration;
   final Map<DocType, DocVersion> pendingDocs; // اللي رفعه الكابتن (آخر نسخة)
   final Map<DocType, DocVersion> activeDocs; // اللي اعتمده الأدمن
@@ -219,7 +199,6 @@ class CaptainVerification {
     this.nationalId = '',
     this.licenseNumber = '',
     this.plateNumber = '',
-    this.guarantor = const Guarantor(),
     this.declaration,
     this.pendingDocs = const {},
     this.activeDocs = const {},
@@ -252,7 +231,6 @@ class CaptainVerification {
         nationalId: (m['nationalId'] as String?) ?? '',
         licenseNumber: (m['licenseNumber'] as String?) ?? '',
         plateNumber: (m['plateNumber'] as String?) ?? '',
-        guarantor: Guarantor.fromMap(m['guarantor']),
         declaration: DeclarationAcceptance.fromMap(m['declaration']),
         pendingDocs: _docs(m['pendingDocs']),
         activeDocs: _docs(m['activeDocs']),

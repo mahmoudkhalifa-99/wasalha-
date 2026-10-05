@@ -89,14 +89,13 @@ CaptureSpec _specFor(DocType t) {
   }
 }
 
-enum _Step { basics, identity, selfie, vehicle, guarantor, declaration, review, send }
+enum _Step { basics, identity, selfie, vehicle, declaration, review, send }
 
 const Map<_Step, String> _stepTitles = {
   _Step.basics: 'البيانات الأساسية',
   _Step.identity: 'بطاقة الرقم القومي',
   _Step.selfie: 'السيلفي والتحقق',
   _Step.vehicle: 'مستندات المركبة',
-  _Step.guarantor: 'بيانات الضامن',
   _Step.declaration: 'الإقرار الإلكتروني',
   _Step.review: 'مراجعة البيانات',
   _Step.send: 'إرسال للمراجعة',
@@ -121,9 +120,6 @@ class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
   final _nid = TextEditingController();
   final _license = TextEditingController();
   final _plate = TextEditingController();
-  final _gName = TextEditingController();
-  final _gNid = TextEditingController();
-  final _gPhone = TextEditingController();
 
   int _stepIndex = 0;
   bool _seeded = false;
@@ -140,7 +136,6 @@ class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
         _Step.identity,
         _Step.selfie,
         if (vehicleNeedsLicenseData(_vehicle)) _Step.vehicle,
-        _Step.guarantor,
         _Step.declaration,
         _Step.review,
         _Step.send,
@@ -156,7 +151,7 @@ class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
 
   @override
   void dispose() {
-    for (final c in [_name, _nid, _license, _plate, _gName, _gNid, _gPhone]) {
+    for (final c in [_name, _nid, _license, _plate]) {
       c.dispose();
     }
     super.dispose();
@@ -178,14 +173,8 @@ class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
     _setText(_nid, v.nationalId);
     _setText(_license, v.licenseNumber);
     if (v.plateNumber.isNotEmpty) _setText(_plate, v.plateNumber);
-    _setText(_gName, v.guarantor.name);
-    _setText(_gNid, v.guarantor.nationalId);
-    _setText(_gPhone, v.guarantor.phone);
     _agree = v.declaration?.isCurrent ?? false;
   }
-
-  Guarantor get _guarantor =>
-      Guarantor(name: _gName.text.trim(), nationalId: normalizeDigits(_gNid.text), phone: normalizeEgyptPhone(_gPhone.text));
 
   bool _editable(VerificationStatus s) => const {
         VerificationStatus.notStarted,
@@ -216,7 +205,6 @@ class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
         nationalId: _nid.text,
         licenseNumber: _license.text,
         plateNumber: _plate.text,
-        guarantor: _guarantor,
         current: v,
       ));
 
@@ -615,21 +603,6 @@ class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
                 note: 'بعد التصوير هتختار تاريخ انتهاء المستند.'),
           ],
         );
-      case _Step.guarantor:
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _notice(
-                'بيانات الضامن بتُسجَّل للمراجعة فقط، ولا تنشئ بحد ذاتها أي التزام قانوني على الضامن. أي إقرار ضمان منفصل هيتطلب موافقته على مستند مستقل.',
-                C.slate100,
-                C.slate800),
-            const SizedBox(height: 12),
-            _field(_gName, 'اسم الضامن', enabled: editable),
-            _field(_gNid, 'الرقم القومي للضامن',
-                type: TextInputType.number, enabled: editable, maxLength: 14, digitsOnly: true),
-            _field(_gPhone, 'هاتف الضامن', type: TextInputType.phone, enabled: editable, maxLength: 14),
-          ],
-        );
       case _Step.declaration:
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -742,7 +715,6 @@ class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
         licenseNumber: _license.text,
         plateNumber: _plate.text,
         docs: {...?v?.activeDocs, ...?v?.pendingDocs},
-        guarantor: _guarantor,
         declarationAccepted: v?.declaration?.isCurrent ?? false,
         now: DateTime.now(),
       );
@@ -765,7 +737,6 @@ class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
         const SizedBox(height: 14),
         _summaryRow('الاسم', _name.text),
         _summaryRow('الرقم القومي', maskNationalId(_nid.text)),
-        _summaryRow('الضامن', _gName.text),
         _summaryRow('الإقرار', v?.declaration?.isCurrent == true ? 'تمت الموافقة (نسخة $kTermsVersion)' : 'غير مسجّل'),
       ],
     );
@@ -845,11 +816,6 @@ class _CaptainVerificationScreenState extends State<CaptainVerificationScreen> {
               .every((t) => v?.currentDoc(t) != null)) {
             return setState(() => _error = 'استكمل مستندات المركبة');
           }
-        case _Step.guarantor:
-          if (!isGuarantorComplete(_guarantor)) {
-            return setState(() => _error = 'بيانات الضامن غير صحيحة (الاسم، رقم قومي 14 رقم، موبايل مصري)');
-          }
-          await _saveProfile(v);
         case _Step.declaration:
           if (!_agree) return setState(() => _error = 'لازم توافق على الإقرار والتعهد للمتابعة');
           if (!(v?.declaration?.isCurrent ?? false)) {

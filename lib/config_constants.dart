@@ -6,7 +6,8 @@
 // عمداً لمطابقة التناقض الموجود في الكود الأصلي بالحرف الواحد.
 import 'models/models.dart';
 
-const double platformCommissionRate = 0.15;
+/// رسوم المنصة الثابتة على كل مشوار مكتمل (بالجنيه). مش نسبة مئوية.
+const double platformFeePerTrip = 5;
 
 /// البيانات الجغرافية الشاملة لمحافظة المنوفية (10 مراكز)
 final List<District> menofiaData = [
