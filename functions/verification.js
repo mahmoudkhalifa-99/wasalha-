@@ -70,13 +70,6 @@ const FAR_FUTURE_MS = Date.UTC(2100, 0, 1);
 const endOfDay = (ms) => { const d = new Date(ms); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59); };
 const BLOCKING_FLAGS = ['DUPLICATE_NID', 'DUPLICATE_PHONE', 'DUPLICATE_LICENSE', 'DUPLICATE_PLATE'];
 
-function isGuarantorComplete(g) {
-  g = g || {};
-  const nid = normalizeDigits(g.nationalId);
-  return String(g.name || '').trim().length >= 3 && nid.length === 14 &&
-    /^01[0125]\d{8}$/.test(normalizeEgyptPhone(g.phone));
-}
-
 // v = وثيقة التوثيق، user = وثيقة users، emailVerified من Auth، now بالميلي.
 function computeGate({ v, user, emailVerified, now }) {
   const reasons = [];
@@ -97,7 +90,6 @@ function computeGate({ v, user, emailVerified, now }) {
       else validUntil = Math.min(validUntil, end);
     }
   }
-  if (!isGuarantorComplete(v.guarantor)) reasons.push('MISSING_GUARANTOR');
   const dec = v.declaration;
   if (!dec || !dec.termsVersion || !dec.acceptedDocumentHash || !dec.acceptedAt) reasons.push('MISSING_DECLARATION');
   if ((v.serverFlags || []).some((f) => BLOCKING_FLAGS.includes(f))) reasons.push('DUPLICATE_IDENTITY');
@@ -256,4 +248,4 @@ exports.verificationExpirySweep = onSchedule({ schedule: 'every day 03:00', time
 });
 
 // للاختبار فقط
-exports._test = { computeGate, uniqueKeyId, normalizeDigits, normalizeEgyptPhone, reminderFor, isGuarantorComplete, requiredDocuments };
+exports._test = { computeGate, uniqueKeyId, normalizeDigits, normalizeEgyptPhone, reminderFor, requiredDocuments };

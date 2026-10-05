@@ -121,54 +121,61 @@ void main() {
     });
   });
 
-  group('commissionDue', () {
-    test('نسبة عادية', () {
-      expect(commissionDue(1000, 15), 150);
-      expect(commissionDue(1250, 10), 125);
+  group('feeDue', () {
+    test('عدد المشاوير × رسوم المشوار', () {
+      expect(feeDue(10, 5), 50);
+      expect(feeDue(1, 5), 5);
+      expect(feeDue(240, 5), 1200);
     });
 
-    test('تقريب لأقرب قرش', () {
-      expect(commissionDue(333, 12.5), 41.63); // 41.625
-      expect(commissionDue(99.99, 15), 15.0); // 14.9985 → 15.00
+    test('رسوم بكسور بتتقرّب لأقرب قرش', () {
+      expect(feeDue(3, 2.5), 7.5);
+      expect(feeDue(3, 3.333), 10.0); // 9.999 → 10.00
     });
 
     test('صفر أو سالب = صفر', () {
-      expect(commissionDue(0, 15), 0);
-      expect(commissionDue(1000, 0), 0);
-      expect(commissionDue(-5, 15), 0);
-      expect(commissionDue(1000, -3), 0);
+      expect(feeDue(0, 5), 0);
+      expect(feeDue(10, 0), 0);
+      expect(feeDue(-2, 5), 0);
+      expect(feeDue(10, -1), 0);
     });
 
-    test('100٪ = الإجمالي كله', () {
-      expect(commissionDue(480, 100), 480);
+    test('الرسوم مش بتعتمد على سعر المشوار', () {
+      final range = DateRange(DateTime(2026, 10, 1), DateTime(2026, 11, 1));
+      final stats = buildCaptainStats([
+        trip('1', 'a', OrderStatus.delivered, 20, ms(2026, 10, 5)),
+        trip('2', 'a', OrderStatus.delivered, 500, ms(2026, 10, 6)),
+      ], range);
+      expect(stats.single.deliveredCount, 2);
+      expect(feeDue(stats.single.deliveredCount, kDefaultFeePerTrip), 10);
     });
   });
 
-  group('parsePercent', () {
+  group('parseFee', () {
     test('أرقام عادية وعشرية', () {
-      expect(parsePercent('15'), 15);
-      expect(parsePercent('12.5'), 12.5);
-      expect(parsePercent(' 7 '), 7);
+      expect(parseFee('5'), 5);
+      expect(parseFee('2.5'), 2.5);
+      expect(parseFee(' 7 '), 7);
     });
 
     test('أرقام عربية وفاصلة عربية/إنجليزية', () {
-      expect(parsePercent('١٥'), 15);
-      expect(parsePercent('١٢٫٥'), 12.5);
-      expect(parsePercent('12,5'), 12.5);
-      expect(parsePercent('15٪'), 15); // علامة ٪ بتتشال
+      expect(parseFee('٥'), 5);
+      expect(parseFee('٢٫٥'), 2.5);
+      expect(parseFee('2,5'), 2.5);
+      expect(parseFee('5 ج.م'), 5);
     });
 
-    test('بره 0..100 أو فاضي أو مش رقم = null', () {
-      expect(parsePercent(''), isNull);
-      expect(parsePercent('abc'), isNull);
-      expect(parsePercent('101'), isNull);
-      expect(parsePercent('-5'), isNull); // السالب مرفوض (مش بيتحوّل لموجب)
-      expect(parsePercent('1.2.3'), isNull);
+    test('بره 0..1000 أو فاضي أو مش رقم = null', () {
+      expect(parseFee(''), isNull);
+      expect(parseFee('abc'), isNull);
+      expect(parseFee('1001'), isNull);
+      expect(parseFee('-5'), isNull); // السالب مرفوض (مش بيتحوّل لموجب)
+      expect(parseFee('1.2.3'), isNull);
     });
 
-    test('الحدود 0 و100 مقبولة', () {
-      expect(parsePercent('0'), 0);
-      expect(parsePercent('100'), 100);
+    test('الحدود 0 و1000 مقبولة', () {
+      expect(parseFee('0'), 0);
+      expect(parseFee('1000'), 1000);
     });
   });
 
@@ -180,13 +187,8 @@ void main() {
       expect(formatMoney(41.63), '41.63');
     });
 
-    test('formatPercent', () {
-      expect(formatPercent(15), '15');
-      expect(formatPercent(12.5), '12.5');
-    });
-
-    test('النسبة الافتراضية = ثابت المنصة 15٪', () {
-      expect(kDefaultCommissionPercent, 15);
+    test('رسوم المشوار الافتراضية = 5 جنيه', () {
+      expect(kDefaultFeePerTrip, 5);
     });
   });
 }

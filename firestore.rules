@@ -189,7 +189,7 @@ service cloud.firestore {
     // والمستندات المعتمدة (activeDocs)؛ gate و serverFlags للـ Cloud Function فقط.
     function ownerKeys() {
       return ['captainId', 'status', 'fullName', 'nationalId', 'licenseNumber', 'plateNumber',
-              'guarantor', 'declaration', 'pendingDocs', 'checks', 'renewalPending',
+              'declaration', 'pendingDocs', 'checks', 'renewalPending',
               'gateRefreshRequestedAt', 'createdAt', 'updatedAt', 'submittedAt'];
     }
 
@@ -209,14 +209,10 @@ service cloud.firestore {
     function submissionComplete(uid) {
       let d = request.resource.data;
       let dec = d.get('declaration', null);
-      let g = d.get('guarantor', null);
       return dec != null && dec.captainId == uid
           && dec.termsVersion is string && dec.termsVersion.size() > 0
           && dec.acceptedDocumentHash is string && dec.acceptedDocumentHash.size() == 64
           && dec.acceptedAt is number
-          && g != null && g.name is string && g.name.size() >= 3
-          && g.nationalId is string && g.nationalId.size() >= 14
-          && g.phone is string && g.phone.size() >= 10
           && d.get('nationalId', '').size() >= 14
           && d.get('fullName', '').size() >= 6
           && docsComplete();

@@ -16,12 +16,11 @@ Module._load = function (request, ...rest) {
 };
 const { _test } = require('./verification');
 Module._load = origLoad;
-const { computeGate, uniqueKeyId, reminderFor, isGuarantorComplete, requiredDocuments } = _test;
+const { computeGate, uniqueKeyId, reminderFor, requiredDocuments } = _test;
 
 const DAY = 86400000;
 const now = Date.UTC(2026, 9, 4, 12);
 const doc = (extra = {}) => ({ path: 'p', version: 1, ...extra });
-const goodGuarantor = { name: 'محمد أحمد علي', nationalId: '29001011234567', phone: '01012345678' };
 const decl = { termsVersion: '1.0', acceptedAt: 1, acceptedDocumentHash: 'h', captainId: 'c' };
 const identity = { idFront: doc(), idBack: doc(), selfieWithId: doc(), poseRight: doc(), poseLeft: doc() };
 const carDocs = (exp1, exp2) => ({
@@ -31,7 +30,7 @@ const carDocs = (exp1, exp2) => ({
   vehiclePhoto: doc(),
 });
 const base = (over = {}) => ({
-  v: { status: 'VERIFIED', activeDocs: identity, guarantor: goodGuarantor, declaration: decl, serverFlags: [], ...(over.v || {}) },
+  v: { status: 'VERIFIED', activeDocs: identity, declaration: decl, serverFlags: [], ...(over.v || {}) },
   user: { role: 'DRIVER', status: 'APPROVED', vehicleType: 'TOKTOK', ...(over.user || {}) },
   emailVerified: over.emailVerified ?? true,
   now,
@@ -75,8 +74,7 @@ test('رخصة بتنتهي النهاردة لسه صالحة طول اليوم
   assert.strictEqual(g.canReceive, true);
 });
 
-test('الضامن والإقرار والتكرار', () => {
-  assert.ok(computeGate(base({ v: { guarantor: {} } })).reasons.includes('MISSING_GUARANTOR'));
+test('الإقرار والتكرار', () => {
   assert.ok(computeGate(base({ v: { declaration: null } })).reasons.includes('MISSING_DECLARATION'));
   assert.ok(computeGate(base({ v: { serverFlags: ['DUPLICATE_NID'] } })).reasons.includes('DUPLICATE_IDENTITY'));
   // علامة غير حاجبة (صورة مكررة) لا تمنع الاستقبال، المراجع هو اللي يقرر
@@ -101,9 +99,7 @@ test('التذكيرات: 30 يوم و7 أيام', () => {
   assert.strictEqual(reminderFor(now - 1 * DAY, now), null);
 });
 
-test('الضامن: شكل البيانات', () => {
-  assert.strictEqual(isGuarantorComplete(goodGuarantor), true);
-  assert.strictEqual(isGuarantorComplete({ ...goodGuarantor, phone: '123' }), false);
+test('المستندات المطلوبة حسب نوع المركبة', () => {
   assert.strictEqual(requiredDocuments('MOTORCYCLE').length, 5);
   assert.strictEqual(requiredDocuments('CAR').length, 8);
 });

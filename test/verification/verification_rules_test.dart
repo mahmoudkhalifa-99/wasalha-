@@ -4,9 +4,9 @@ import 'package:wasalha/features/verification/domain/verification_enums.dart';
 import 'package:wasalha/features/verification/domain/verification_rules.dart';
 import 'package:wasalha/features/verification/models/captain_verification.dart';
 import 'package:wasalha/models/models.dart' show UserStatus, VehicleType;
+import 'package:wasalha/config_constants.dart' show platformFeePerTrip;
 
 final now = DateTime(2026, 10, 4, 12);
-const goodGuarantor = Guarantor(name: 'محمد أحمد علي', nationalId: '29001011234567', phone: '01012345678');
 
 DocVersion _doc(DocType t, {int v = 1, DateTime? expires, Map<String, dynamic> quality = const {}}) => DocVersion(
       type: t,
@@ -36,7 +36,6 @@ GateResult _gate({
   UserStatus account = UserStatus.approved,
   VehicleType? vehicle = VehicleType.toktok,
   Map<DocType, DocVersion>? docs,
-  Guarantor guarantor = goodGuarantor,
   bool declaration = true,
   List<String> flags = const [],
 }) =>
@@ -46,7 +45,6 @@ GateResult _gate({
       accountStatus: account,
       vehicleType: vehicle,
       activeDocs: docs ?? _identity(),
-      guarantor: guarantor,
       declarationAccepted: declaration,
       serverFlags: flags,
       now: now,
@@ -137,8 +135,7 @@ void main() {
       expect(g.reasons, contains(GateReason.documentExpired));
     });
 
-    test('الضامن والإقرار والتكرار', () {
-      expect(_gate(guarantor: const Guarantor()).reasons, contains(GateReason.missingGuarantor));
+    test('الإقرار والتكرار', () {
       expect(_gate(declaration: false).reasons, contains(GateReason.missingDeclaration));
       expect(_gate(flags: ['DUPLICATE_NID']).reasons, contains(GateReason.duplicateIdentity));
       // صورة مكررة علامة للمراجع مش حجب تلقائي
@@ -153,7 +150,6 @@ void main() {
             accountStatus: UserStatus.approved,
             vehicleType: VehicleType.motorcycle,
             activeDocs: _identity(),
-            guarantor: goodGuarantor,
             declarationAccepted: true,
             now: now,
           ),
@@ -181,7 +177,6 @@ void main() {
       String nid = '29001011234567',
       String name = 'محمد أحمد علي حسن',
       Map<DocType, DocVersion>? docs,
-      Guarantor g = goodGuarantor,
       bool decl = true,
       String license = '',
       String plate = '',
@@ -193,7 +188,6 @@ void main() {
           licenseNumber: license,
           plateNumber: plate,
           docs: docs ?? _identity(),
-          guarantor: g,
           declarationAccepted: decl,
           now: now,
         );
@@ -230,7 +224,6 @@ void main() {
       expect(blockers(docs: docs).any((x) => x.contains('جودة الصورة')), isTrue);
     });
 
-    test('ضامن ناقص', () => expect(blockers(g: const Guarantor(name: 'س')), contains('بيانات الضامن غير مكتملة')));
   });
 
   group('مطابقة البيانات (OCR)', () {
@@ -334,15 +327,6 @@ void main() {
     });
   });
 
-  group('الضامن', () {
-    test('بيانات صحيحة', () => expect(isGuarantorComplete(goodGuarantor), isTrue));
-    test('اسم قصير أو رقم قومي/هاتف غلط', () {
-      expect(isGuarantorComplete(const Guarantor(name: 'مح', nationalId: '29001011234567', phone: '01012345678')), isFalse);
-      expect(isGuarantorComplete(const Guarantor(name: 'محمد علي', nationalId: '1', phone: '01012345678')), isFalse);
-      expect(isGuarantorComplete(const Guarantor(name: 'محمد علي', nationalId: '29001011234567', phone: '123')), isFalse);
-    });
-  });
-
   group('الإقرار الإلكتروني', () {
     test('البصمة ثابتة لنفس النص والنسخة', () {
       expect(declarationHash(), declarationHash());
@@ -350,7 +334,7 @@ void main() {
     });
 
     test('تغيّر النص أو النسخة يغيّر البصمة (نعرف أنهي نسخة وافق عليها)', () {
-      expect(declarationHash(version: '1.1'), isNot(declarationHash()));
+      expect(declarationHash(version: '1.0'), isNot(declarationHash()));
       expect(declarationHash(text: '${kDeclarationText}.'), isNot(declarationHash()));
     });
 
@@ -377,6 +361,13 @@ void main() {
       expect(DeclarationAcceptance.fromMap(a.toMap())!.acceptedDocumentHash, a.acceptedDocumentHash);
       expect(DeclarationAcceptance.fromMap({'captainId': 'c'}), isNull);
       expect(DeclarationAcceptance.fromMap(null), isNull);
+    });
+
+    test('الإقرار فيه بند رسوم المنصة بنفس قيمة الثابت (5 جنيه على كل مشوار)', () {
+      expect(platformFeePerTrip, 5);
+      expect(kDeclarationText.contains('${platformFeePerTrip.toInt()} جنيهات'), isTrue);
+      expect(kDeclarationText.contains('عن كل مشوار'), isTrue);
+      expect(kTermsVersion, '1.1');
     });
 
     test('النص يبدأ وينتهي بالجمل المعتمدة حرفيًا', () {
