@@ -1,4 +1,5 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+// Firestore بيعرّف كلاس اسمه Order (Index) بيتعارض مع Order بتاعنا في models.dart.
+import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
 
 import '../models/models.dart';
 import '../models/review.dart';

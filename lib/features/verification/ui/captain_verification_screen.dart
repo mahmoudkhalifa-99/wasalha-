@@ -6,7 +6,6 @@ import '../../../models/models.dart' show AppUser, VehicleType;
 import '../../../services/firebase_service.dart' show friendlyError;
 import '../../../theme/app_colors.dart';
 import '../../../theme/app_text.dart';
-import '../../../widgets/common.dart';
 import '../data/verification_repository.dart';
 import '../domain/declaration.dart';
 import '../domain/document_requirements.dart';
