@@ -14,6 +14,7 @@ import '../../theme/app_shadows.dart';
 import '../../theme/app_text.dart';
 import '../../widgets/common.dart';
 import 'broadcast_dialog.dart';
+import 'reviews_view.dart';
 
 String _districtNameFor(String? villageName) {
   if (villageName == null) return 'المنوفية';
@@ -32,7 +33,7 @@ class OperatorDashboard extends StatefulWidget {
   State<OperatorDashboard> createState() => _OperatorDashboardState();
 }
 
-enum _OpTab { live, drivers, history }
+enum _OpTab { live, drivers, history, reviews }
 
 class _OperatorDashboardState extends State<OperatorDashboard> {
   List<Order> _orders = [];
@@ -162,6 +163,7 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
                     if (_activeTab == _OpTab.live) _liveTab(context),
                     if (_activeTab == _OpTab.history) _historyTab(),
                     if (_activeTab == _OpTab.drivers) _driversTab(context),
+                    if (_activeTab == _OpTab.reviews) ReviewsView(user: widget.user),
                   ],
                 ),
               ),
@@ -253,6 +255,8 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
             ),
             child: Row(
               children: [
+                Expanded(child: _tabChip(_OpTab.reviews, LucideIcons.star, 'الآراء', null)),
+                const SizedBox(width: 4),
                 Expanded(child: _tabChip(_OpTab.history, LucideIcons.clock, 'السجل', null)),
                 const SizedBox(width: 4),
                 Expanded(child: _tabChip(_OpTab.drivers, LucideIcons.bike, 'الكباتن', approvedCount)),

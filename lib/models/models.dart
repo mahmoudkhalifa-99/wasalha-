@@ -624,6 +624,7 @@ class Order {
   final String? restaurantName;
   final String? specialRequest;
   final bool customerReceived; // العميل أكد إنه استلم الطلب فعلاً
+  final bool ratingSkipped; // العميل تخطى التقييم
 
   const Order({
     required this.id,
@@ -668,6 +669,7 @@ class Order {
     this.restaurantName,
     this.specialRequest,
     this.customerReceived = false,
+    this.ratingSkipped = false,
   });
 
   factory Order.fromMap(Map<String, dynamic> m, [String? docId]) => Order(
@@ -722,6 +724,7 @@ class Order {
         restaurantName: m['restaurantName'] as String?,
         specialRequest: m['specialRequest'] as String?,
         customerReceived: m['customerReceived'] == true,
+        ratingSkipped: m['ratingSkipped'] == true,
       );
 
   Map<String, dynamic> toMap() => stripFirestore({

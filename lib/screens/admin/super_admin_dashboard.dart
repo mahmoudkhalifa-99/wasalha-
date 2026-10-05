@@ -15,8 +15,10 @@ import 'broadcast_dialog.dart';
 import 'admin_geography_manager.dart';
 import 'admin_restaurant_manager.dart';
 import 'admin_users_list.dart';
+import '../../features/verification/ui/admin_verification_view.dart';
+import 'reviews_view.dart';
 
-enum _AdminTab { dashboard, users, restaurants, ads, geo }
+enum _AdminTab { dashboard, users, restaurants, ads, geo, reviews, verification }
 
 /// نسخة Flutter من pages/SuperAdminDashboard.tsx
 class SuperAdminDashboard extends StatefulWidget {
@@ -233,6 +235,26 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
         return AdminAdsManager(user: widget.user);
       case _AdminTab.geo:
         return AdminGeographyManager(user: widget.user);
+      case _AdminTab.verification:
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 900),
+              child: AdminVerificationView(user: widget.user),
+            ),
+          ),
+        );
+      case _AdminTab.reviews:
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 900),
+              child: ReviewsView(user: widget.user),
+            ),
+          ),
+        );
       case _AdminTab.dashboard:
         return const SizedBox.shrink();
     }
@@ -434,6 +456,10 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
           LucideIcons.megaphone, C.amber50, C.amber500),
       (_AdminTab.geo, 'إدارة الجغرافيا', 'إضافة قرى ومراكز جديدة',
           LucideIcons.mapPin, C.rose50, C.rose500),
+      (_AdminTab.verification, 'توثيق الكباتن', 'مراجعة مستندات وهوية الكباتن',
+          LucideIcons.shieldCheck, C.emerald50, C.emerald600),
+      (_AdminTab.reviews, 'آراء وتقييمات العملاء', 'تقييمات الكباتن وتعليقات العملاء',
+          LucideIcons.star, C.amber50, C.amber500),
     ];
     return LayoutBuilder(builder: (context, box) {
       final cols = box.maxWidth >= 700 ? 2 : 1;

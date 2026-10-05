@@ -18,6 +18,8 @@ import '../services/back_interceptor.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
 import '../services/order_service.dart' as order_service;
+import '../models/review.dart';
+import '../services/review_service.dart';
 import '../services/storage_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_shadows.dart';
@@ -170,6 +172,23 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
             o.status != OrderStatus.cancelled) {
           active = o;
           break;
+        }
+      }
+      // طلب اتسلّم واستلامه متأكد ولسه متقيّمش ولا اتخطى: نفضل نعرض شاشة التقييم
+      // (آخر واحد بس، وخلال 7 أيام عشان طلبات قديمة ما ترجعش).
+      if (active == null) {
+        final cutoff = DateTime.now()
+            .subtract(const Duration(days: 7))
+            .millisecondsSinceEpoch;
+        for (final o in all) {
+          if (o.status == OrderStatus.delivered &&
+              needsReview(o) &&
+              (o.deliveredAt ?? o.updatedAt) >= cutoff &&
+              (active == null ||
+                  (o.deliveredAt ?? o.updatedAt) >
+                      (active.deliveredAt ?? active.updatedAt))) {
+            active = o;
+          }
         }
       }
       final prevId = _activeOrder?.id;
@@ -572,25 +591,98 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     }
   }
 
-  Future<void> _handleRateTrip() async {
-    final order = _activeOrder;
-    if (order == null) return;
+  Future<void> _handleRateTrip(Order order) async {
+    if (_isRatingSubmitting || order.driverId == null) return;
     setState(() => _isRatingSubmitting = true);
     try {
-      await db.collection('orders').doc(order.id).update({
-        'rating': _rating,
-        'feedback': _feedbackCtrl.text.trim(),
-        'ratedAt': DateTime.now().millisecondsSinceEpoch,
-      });
+      await ReviewService.submit(
+        order: order,
+        customerName: user.name,
+        rating: _rating,
+        comment: _feedbackCtrl.text,
+      );
+      if (!mounted) return;
       setState(() {
         _rating = 5;
         _feedbackCtrl.clear();
       });
     } catch (e) {
-      if (mounted) showAppAlert(context, 'خطأ في التقييم');
+      if (mounted) showAppAlert(context, 'تعذر إرسال التقييم: ${friendlyError(e)}');
     } finally {
       if (mounted) setState(() => _isRatingSubmitting = false);
     }
+  }
+
+  Future<void> _handleSkipRating(Order order) async {
+    try {
+      await ReviewService.skip(order);
+    } catch (e) {
+      if (mounted) showAppAlert(context, 'تعذر التخطي: ${friendlyError(e)}');
+    }
+  }
+
+  /// نجوم + تعليق + زرار إرسال. بيتعرض بعد تأكيد الاستلام وفي شاشة "وصلت بالسلامة".
+  Widget _ratingForm(Order order, {bool compact = false}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            for (var st = 1; st <= 5; st++)
+              GestureDetector(
+                onTap: () => setState(() => _rating = st),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Icon(LucideIcons.star,
+                      size: compact ? 36 : 48,
+                      color: _rating >= st ? C.amber400 : C.slate200),
+                ),
+              ),
+          ],
+        ),
+        SizedBox(height: compact ? 14 : 28),
+        Container(
+          decoration: BoxDecoration(
+            color: C.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: C.slate100, width: 2),
+          ),
+          child: TextField(
+            controller: _feedbackCtrl,
+            maxLines: null,
+            minLines: compact ? 3 : 4,
+            maxLength: maxReviewCommentLength,
+            textAlign: TextAlign.right,
+            textDirection: TextDirection.rtl,
+            style: T.s(13, T.w700, C.slate800),
+            decoration: InputDecoration(
+              border: InputBorder.none,
+              hintText: 'اكتب تعليقك على الكابتن (اختياري)',
+              hintStyle: T.s(13, T.w700, C.gray400),
+              contentPadding: const EdgeInsets.all(18),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        PressScale(
+          onTap: _isRatingSubmitting ? null : () => _handleRateTrip(order),
+          child: Container(
+            padding: EdgeInsets.symmetric(vertical: compact ? 16 : 24),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: C.emerald600,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: Sh.lg(),
+            ),
+            child: _isRatingSubmitting
+                ? const Spinner()
+                : Text('إرسال التقييم',
+                    style: T.s(compact ? 15 : 20, T.w900, C.white)),
+          ),
+        ),
+      ],
+    );
   }
 
   // ───────────────────────── الواجهة ─────────────────────────
@@ -1418,6 +1510,20 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
               textAlign: TextAlign.center,
               style: T.s(13, T.w900, done ? C.emerald700 : C.slate900,
                   height: 1.5)),
+          if (done && order.driverId != null) ...[
+            const SizedBox(height: 18),
+            if (order.rating != null)
+              Text('شكرًا على تقييمك ⭐',
+                  textAlign: TextAlign.center,
+                  style: T.s(13, T.w900, C.emerald700))
+            else ...[
+              Text('قيّم الكابتن ${order.driverName ?? ""}',
+                  textAlign: TextAlign.center,
+                  style: T.s(14, T.w900, C.slate900)),
+              const SizedBox(height: 12),
+              _ratingForm(order, compact: true),
+            ],
+          ],
           if (!done) ...[
             const SizedBox(height: 14),
             PressScale(
@@ -1671,77 +1777,20 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
           const SizedBox(height: 32),
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(32),
+            padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
               color: C.slate50,
-              borderRadius: BorderRadius.circular(48),
+              borderRadius: BorderRadius.circular(40),
             ),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    for (var s = 1; s <= 5; s++)
-                      GestureDetector(
-                        onTap: () => setState(() => _rating = s),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 6),
-                          child: Icon(LucideIcons.star,
-                              size: 48,
-                              color: _rating >= s ? C.amber400 : C.slate200),
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 40),
-                Container(
-                  decoration: BoxDecoration(
-                    color: C.white,
-                    borderRadius: BorderRadius.circular(32),
-                  ),
-                  constraints: const BoxConstraints(minHeight: 120),
-                  child: TextField(
-                    controller: _feedbackCtrl,
-                    maxLines: null,
-                    minLines: 4,
-                    textAlign: TextAlign.right,
-                    textDirection: TextDirection.rtl,
-                    style: T.s(13, T.w700, C.slate800),
-                    decoration: InputDecoration(
-                      border: InputBorder.none,
-                      hintText: 'هل لديك أي ملاحظات أخرى على الرحلة؟ (اختياري)',
-                      hintStyle: T.s(13, T.w700, C.gray400),
-                      contentPadding: const EdgeInsets.all(24),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+            child: _ratingForm(order),
           ),
-          const SizedBox(height: 32),
-          PressScale(
-            onTap: _isRatingSubmitting ? null : _handleRateTrip,
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 32),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: const Color(0xFF10B981),
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: Sh.xxl(),
-              ),
-              child: _isRatingSubmitting
-                  ? const Spinner(size: 32)
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(LucideIcons.thumbsUp,
-                            size: 24, color: C.white),
-                        const SizedBox(width: 12),
-                        Text('تأكيد وإرسال التقييم',
-                            style: T.s(24, T.w900, C.white)),
-                      ],
-                    ),
+          const SizedBox(height: 20),
+          GestureDetector(
+            onTap: _isRatingSubmitting ? null : () => _handleSkipRating(order),
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Text('تخطي التقييم',
+                  style: T.s(12, T.w900, C.slate400)),
             ),
           ),
         ],

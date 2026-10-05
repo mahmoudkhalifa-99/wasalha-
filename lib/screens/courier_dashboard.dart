@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../features/tracking/models/tracking_models.dart' show GeoFix;
 import '../features/tracking/services/driver_location_source.dart';
+import '../features/verification/ui/verification_banner.dart';
 import '../models/models.dart';
 import '../services/back_interceptor.dart';
 import '../services/firebase_service.dart';
@@ -515,6 +516,12 @@ class _CourierDashboardState extends State<CourierDashboard> {
     if (price == null || _isSubmitting) return;
     setState(() => _isSubmitting = true);
     try {
+      // رسالة ودّية لو الحساب مش مسموح له يستقبل طلبات (الحجب الفعلي في قواعد Firestore).
+      final blocked = await verificationBlockMessage(user.id);
+      if (blocked != null) {
+        if (mounted) showAppAlert(context, blocked);
+        return;
+      }
       final userSnap = await db.collection('users').doc(user.id).get();
       final userData = userSnap.data();
       final rating = (userData?['rating'] as num?)?.toDouble() ?? 5.0;
@@ -668,6 +675,7 @@ class _CourierDashboardState extends State<CourierDashboard> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
+                        VerificationBanner(user: user),
                         _onlineStatusCard(),
                         const SizedBox(height: 32),
                         if (_activeOrder != null)
