@@ -64,6 +64,36 @@ service cloud.firestore {
       return signedIn() && emailOk() && notSuspended();
     }
 
+    // ───────────── بوابة استقبال الطلبات (توثيق الكباتن) ─────────────
+    // مفتاح التشغيل config/verification.enforced (الأدمن يشغّله بعد نشر الـ Functions).
+    // مقفول = الكباتن الحاليين شغالين زي ما هم. مفتوح = كابتن بدون بوابة سليمة مينفعش
+    // يقدّم عرض ولا يتعيّن على طلب، حتى لو اتعدّل التطبيق أو اتبعت Request مباشر.
+    // gate بتكتبه الـ Cloud Function فقط (emailVerified + VERIFIED + المستندات + الصلاحية + التكرار).
+    // validUntil = أقرب انتهاء لمستند مطلوب، فالمنع بيحصل تلقائي في وقته حتى لو الـ Function واقفة.
+    function cfgPath() { return /databases/$(database)/documents/config/verification; }
+    function enforced() {
+      return exists(cfgPath()) && get(cfgPath()).data.get('enforced', false) == true;
+    }
+    function verPath(uid) { return /databases/$(database)/documents/captain_verifications/$(uid); }
+    function driverGateOk(uid) {
+      return !enforced() || (
+        exists(verPath(uid))
+        && get(verPath(uid)).data.get('status', '') == 'VERIFIED'
+        && get(verPath(uid)).data.get('gate', {}).get('canReceive', false) == true
+        && get(verPath(uid)).data.get('gate', {}).get('validUntil', request.time) > request.time
+        && get(/databases/$(database)/documents/users/$(uid)).data.get('status', 'APPROVED') == 'APPROVED');
+    }
+    // تعيين كابتن على طلب (driverId / assignedTo) لازم يعدّي البوابة. باقي تحديثات الطلب
+    // (تسليم/إلغاء) لكابتن معيّن بالفعل ما بتتأثرش، عشان ما نعلّقش عميل في نص الطريق.
+    function assignmentOk() {
+      let nd = request.resource.data.get('driverId', '');
+      let od = resource.data.get('driverId', '');
+      let na = request.resource.data.get('assignedTo', '');
+      let oa = resource.data.get('assignedTo', '');
+      return (nd == od || nd == '' || driverGateOk(nd))
+          && (na == oa || na == '' || driverGateOk(na));
+    }
+
     // ───────────── المستخدمون ─────────────
     function validNewUser(uid) {
       let d = request.resource.data;
@@ -144,11 +174,181 @@ service cloud.firestore {
       allow create: if canWrite()
           && (request.resource.data.customerId == request.auth.uid || isStaff())
           && request.resource.data.status in ['DRAFT', 'PENDING'];
-      allow update: if canWrite() && (
+      allow update: if canWrite() && assignmentOk() && (
           isStaff()
           || resource.data.customerId == request.auth.uid
           || resource.data.get('driverId', '') == request.auth.uid
           || resource.data.get('assignedTo', '') == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // ───────────── توثيق الكباتن ─────────────
+    // الوثيقة: captain_verifications/{uid}. القراءة: الكابتن نفسه أو السوبر أدمن فقط
+    // (بيانات هوية حساسة: المشغّل والعميل والكباتن الآخرين ممنوعين).
+    // الكابتن يكتب بياناته ومستنداته المرفوعة (pendingDocs) وإقراره؛ السوبر أدمن بيكتب القرار
+    // والمستندات المعتمدة (activeDocs)؛ gate و serverFlags للـ Cloud Function فقط.
+    function ownerKeys() {
+      return ['captainId', 'status', 'fullName', 'nationalId', 'licenseNumber', 'plateNumber',
+              'guarantor', 'declaration', 'pendingDocs', 'checks', 'renewalPending',
+              'gateRefreshRequestedAt', 'createdAt', 'updatedAt', 'submittedAt'];
+    }
+
+    function hasDoc(t) {
+      return t in request.resource.data.get('pendingDocs', {}).keys()
+          || t in resource.data.get('activeDocs', {}).keys();
+    }
+
+    // كل المستندات المطلوبة لنوع المركبة موجودة (نفس requiredDocuments في التطبيق والـ Function)
+    function docsComplete() {
+      let vt = me().get('vehicleType', '');
+      return hasDoc('idFront') && hasDoc('idBack') && hasDoc('selfieWithId')
+          && hasDoc('poseRight') && hasDoc('poseLeft')
+          && (vt != 'CAR' || (hasDoc('drivingLicense') && hasDoc('vehicleLicense') && hasDoc('vehiclePhoto')));
+    }
+
+    function submissionComplete(uid) {
+      let d = request.resource.data;
+      let dec = d.get('declaration', null);
+      let g = d.get('guarantor', null);
+      return dec != null && dec.captainId == uid
+          && dec.termsVersion is string && dec.termsVersion.size() > 0
+          && dec.acceptedDocumentHash is string && dec.acceptedDocumentHash.size() == 64
+          && dec.acceptedAt is number
+          && g != null && g.name is string && g.name.size() >= 3
+          && g.nationalId is string && g.nationalId.size() >= 14
+          && g.phone is string && g.phone.size() >= 10
+          && d.get('nationalId', '').size() >= 14
+          && d.get('fullName', '').size() >= 6
+          && docsComplete();
+    }
+
+    function ownerVerUpdateOk(uid) {
+      let b = resource.data.status;
+      let a = request.resource.data.status;
+      let diff = request.resource.data.diff(resource.data).affectedKeys();
+      return diff.hasOnly(ownerKeys())
+          && request.resource.data.captainId == uid
+          && (
+            // بدون تغيير حالة: تعديل البيانات في الحالات المفتوحة، وتجديد مستندات لموثّق
+            (a == b && (
+               b in ['NOT_STARTED', 'INCOMPLETE', 'NEEDS_CORRECTION', 'EXPIRED']
+               || (b == 'VERIFIED' && diff.hasOnly(['pendingDocs', 'renewalPending', 'checks',
+                                                    'gateRefreshRequestedAt', 'updatedAt']))
+               || (b in ['PENDING_REVIEW', 'SUSPENDED', 'REJECTED']
+                   && diff.hasOnly(['gateRefreshRequestedAt', 'updatedAt']))))
+            || (b == 'NOT_STARTED' && a == 'INCOMPLETE')
+            || (b == 'INCOMPLETE' && a == 'PENDING_REVIEW' && submissionComplete(uid))
+            || (b == 'NEEDS_CORRECTION' && a == 'INCOMPLETE')
+            || (b == 'NEEDS_CORRECTION' && a == 'PENDING_REVIEW' && submissionComplete(uid))
+            || (b == 'EXPIRED' && a == 'PENDING_REVIEW' && submissionComplete(uid)));
+    }
+
+    function adminVerUpdateOk() {
+      let b = resource.data.status;
+      let a = request.resource.data.status;
+      let d = request.resource.data;
+      let diff = d.diff(resource.data).affectedKeys();
+      return isAdmin()
+          && diff.hasOnly(['status', 'review', 'activeDocs', 'pendingDocs', 'renewalPending', 'updatedAt'])
+          && (
+            // اعتماد تجديد لكابتن موثّق من غير تغيير حالته
+            (a == b && b == 'VERIFIED')
+            || (b == 'PENDING_REVIEW' && a in ['VERIFIED', 'NEEDS_CORRECTION', 'REJECTED'])
+            || (b == 'VERIFIED' && a in ['SUSPENDED', 'EXPIRED'])
+            || (b == 'SUSPENDED' && a == 'VERIFIED')
+            || (b == 'REJECTED' && a == 'NEEDS_CORRECTION'))
+          && d.review.reviewerId == request.auth.uid
+          && d.review.reviewedAt is number
+          && (a in ['VERIFIED', 'EXPIRED'] || (d.review.reason is string && d.review.reason.size() >= 3));
+    }
+
+    match /captain_verifications/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if canWrite() && request.auth.uid == uid && myRole() == 'DRIVER'
+          && request.resource.data.keys().hasOnly(ownerKeys())
+          && request.resource.data.captainId == uid
+          && request.resource.data.status in ['NOT_STARTED', 'INCOMPLETE'];
+      allow update: if canWrite() && (
+          (request.auth.uid == uid && ownerVerUpdateOk(uid)) || adminVerUpdateOk());
+      allow delete: if false; // الاحتفاظ والحذف حسب سياسة قانونية لاحقًا (من الكونسول)
+
+      // نسخ المستندات: إضافة فقط من الكابتن، والنسخ القديمة بتفضل (ما تتعدّلش ولا تتحذفش).
+      match /documents/{docId} {
+        allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+        allow create: if canWrite() && request.auth.uid == uid && myRole() == 'DRIVER'
+            && request.resource.data.keys().hasOnly(['type', 'version', 'path', 'sha256', 'capturedAt',
+                                                    'expiresAt', 'number', 'quality', 'status'])
+            && request.resource.data.status == 'PENDING'
+            && request.resource.data.path.matches('captain_docs/' + uid + '/.*')
+            && request.resource.data.version is int && request.resource.data.version >= 1;
+        // الأدمن بس يغيّر حالة النسخة (ACTIVE / SUPERSEDED / REJECTED)
+        allow update: if canWrite() && isAdmin()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'reviewedBy', 'reviewedAt'])
+            && request.resource.data.status in ['ACTIVE', 'SUPERSEDED', 'REJECTED'];
+        allow delete: if false;
+      }
+
+      // سجل المراجعة: إضافة فقط. ما يتعدّلش ولا يتحذفش من أي حد (ولا من الكابتن).
+      match /audit/{eid} {
+        allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+        allow create: if canWrite()
+            && request.resource.data.keys().hasOnly(['captainId', 'action', 'performedBy', 'timestamp',
+                                                    'oldStatus', 'newStatus', 'reason'])
+            && request.resource.data.captainId == uid
+            && request.resource.data.performedBy == request.auth.uid
+            && (
+              (request.auth.uid == uid && myRole() == 'DRIVER'
+                && request.resource.data.action in ['DOCUMENT_UPLOADED', 'DOCUMENT_REPLACED', 'TERMS_ACCEPTED',
+                                                   'PROFILE_CHANGED', 'VERIFICATION_SUBMITTED'])
+              || (isAdmin()
+                && request.resource.data.action in ['DOCUMENT_APPROVED', 'DOCUMENT_REJECTED', 'CAPTAIN_VERIFIED',
+                                                   'CAPTAIN_SUSPENDED', 'CAPTAIN_REACTIVATED',
+                                                   'VERIFICATION_REVIEWED', 'DOCUMENT_ACCESSED']));
+        allow update, delete: if false;
+      }
+    }
+
+    // مفاتيح منع الازدواج: الـ Function بتكتبها بس. السوبر أدمن يقراها (عشان يشوف مين صاحب القيمة).
+    match /unique_keys/{keyId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // إعدادات التوثيق: { enforced: bool, termsVersion: string }
+    match /config/verification {
+      allow read: if signedIn();
+      allow write: if isAdmin()
+          && request.resource.data.keys().hasOnly(['enforced', 'termsVersion', 'updatedAt', 'updatedBy'])
+          && request.resource.data.enforced is bool;
+    }
+
+    // ───────────── تقييمات الكباتن ─────────────
+    // reviews/{orderId}: تقييم واحد لكل طلب. العميل صاحب الطلب بس يكتبه (بعد تأكيد
+    // الاستلام)، ومينفعش يتعدّل. القراءة: الإدارة/المشغّل، العميل صاحبه، أو الكابتن
+    // المُقيَّم. الحذف (للإشراف على تعليق مسيء): السوبر أدمن.
+    function validReview(orderId) {
+      let d = request.resource.data;
+      let o = get(/databases/$(database)/documents/orders/$(orderId)).data;
+      return d.keys().hasOnly(['orderId', 'customerId', 'customerName', 'driverId',
+                               'driverName', 'rating', 'comment', 'createdAt'])
+          && d.orderId == orderId
+          && d.customerId == request.auth.uid
+          && o.customerId == request.auth.uid
+          && o.get('customerReceived', false) == true
+          && o.get('driverId', '') == d.driverId
+          && d.rating is int && d.rating >= 1 && d.rating <= 5
+          && d.comment is string && d.comment.size() <= 500
+          && d.customerName is string && d.customerName.size() <= 120
+          && d.driverName is string && d.driverName.size() <= 120;
+    }
+
+    match /reviews/{orderId} {
+      allow read: if signedIn()
+          && (isStaff()
+              || resource.data.customerId == request.auth.uid
+              || resource.data.driverId == request.auth.uid);
+      allow create: if canWrite() && validReview(orderId);
+      allow update: if false;
       allow delete: if isAdmin();
     }
 
@@ -157,7 +357,8 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create: if canWrite()
           && request.resource.data.driverId == request.auth.uid
-          && myRole() == 'DRIVER';
+          && myRole() == 'DRIVER'
+          && driverGateOk(request.auth.uid);
       allow update, delete: if canWrite()
           && (resource.data.driverId == request.auth.uid || isStaff());
     }

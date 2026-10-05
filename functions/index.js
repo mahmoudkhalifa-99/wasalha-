@@ -56,3 +56,9 @@ exports.pushOnNotification = onDocumentCreated(
     }
   }
 );
+
+// توثيق الكباتن (البوابة + منع الازدواج + الصلاحية)
+const verification = require('./verification');
+exports.onVerificationWrite = verification.onVerificationWrite;
+exports.onDriverUserWrite = verification.onDriverUserWrite;
+exports.verificationExpirySweep = verification.verificationExpirySweep;

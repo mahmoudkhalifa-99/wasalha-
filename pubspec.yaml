@@ -31,6 +31,8 @@ dependencies:
   # أدوات
   http: ^1.2.2
   image: ^4.2.0
+  camera: ^0.11.0+2   # تصوير المستندات داخل التطبيق (إطار إرشادي، بدون معرض الصور)
+  crypto: ^3.0.3      # SHA-256 لبصمة الإقرار والصور
   url_launcher: ^6.3.1
   google_fonts: ^6.2.1
   lucide_icons_flutter: ^3.1.13
