@@ -105,7 +105,14 @@ QualityReport analyzeImageQualitySync(
   bool expectCardAspect = false,
   QualityThresholds thresholds = const QualityThresholds(),
 }) {
-  final decoded = img.decodeImage(bytes);
+  // مكتبة image ممكن ترمي استثناء (مش بترجّع null بس) مع ملف تالف/قصير جدًا،
+  // مثلاً RangeError من فاحص PSD. أي فشل في القراءة = DECODE_FAILED.
+  img.Image? decoded;
+  try {
+    decoded = img.decodeImage(bytes);
+  } catch (_) {
+    decoded = null;
+  }
   if (decoded == null) {
     return const QualityReport(
         width: 0,
