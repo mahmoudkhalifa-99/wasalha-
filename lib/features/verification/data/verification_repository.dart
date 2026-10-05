@@ -1,9 +1,10 @@
 import 'dart:typed_data';
 
-import 'package:cloud_firestore/cloud_firestore.dart' hide Order, Blob;
-import 'package:firebase_storage/firebase_storage.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
+import 'package:flutter/foundation.dart' show compute;
 
 import '../domain/declaration.dart';
+import '../domain/image_shrink.dart';
 import '../domain/national_id.dart' show normalizeDigits;
 import '../domain/unique_keys.dart';
 import '../domain/verification_enums.dart';
@@ -17,15 +18,18 @@ class VerificationConfig {
   const VerificationConfig({this.enforced = false, this.termsVersion = kTermsVersion});
 }
 
-/// الوصول لبيانات التوثيق. كل الحماية الحقيقية في firestore.rules/storage.rules/Functions؛
+/// الوصول لبيانات التوثيق. كل الحماية الحقيقية في firestore.rules/Functions؛
 /// الكود هنا بيتبع نفس القواعد وبيسجّل سجل المراجعة.
+///
+/// صور المستندات بتتخزّن في Firestore (captain_verifications/{uid}/files/...)
+/// بدل Firebase Storage، لأن Storage محتاج خطة Blaze المدفوعة.
 class VerificationRepository {
-  VerificationRepository({FirebaseFirestore? db, FirebaseStorage? storage})
-      : _db = db ?? FirebaseFirestore.instance,
-        _st = storage ?? FirebaseStorage.instance;
+  VerificationRepository({FirebaseFirestore? db})
+      : _db = db ?? FirebaseFirestore.instance;
 
   final FirebaseFirestore _db;
-  final FirebaseStorage _st;
+
+  static final RegExp _docPath = RegExp(r'^captain_docs/([^/]+)/([^/]+)/v(\d+)\.jpg$');
 
   static int _now() => DateTime.now().millisecondsSinceEpoch;
 
@@ -130,15 +134,27 @@ class VerificationRepository {
     await ensureDoc(uid);
     var version = nextDocVersion(current, type);
 
-    // Storage بيمنع الاستبدال: لو النسخة موجودة (رفع سابق نص مكتمل) نجرّب اللي بعدها.
-    late Reference ref;
+    // نصغّر الصورة لو لزم عشان تدخل في وثيقة Firestore (أقل من ~700 كيلو).
+    final stored = await compute(shrinkJpegForFirestore, jpegBytes);
+    if (stored.length > kHardMaxStoredImageBytes) {
+      throw StateError('حجم الصورة كبير جدًا بعد الضغط، صوّر تاني.');
+    }
+
+    // القواعد بتمنع استبدال/تعديل ملف موجود: لو النسخة موجودة (رفع سابق نص
+    // مكتمل) الكتابة بترجع permission-denied فنجرّب النسخة اللي بعدها.
     for (var attempt = 0;; attempt++) {
-      ref = _st.ref('captain_docs/$uid/${type.value}/v$version.jpg');
       try {
-        await ref.putData(jpegBytes, SettableMetadata(contentType: 'image/jpeg'));
+        await _fileRef(uid, type.value, version).set({
+          'type': type.value,
+          'version': version,
+          'bytes': Blob(stored),
+          'size': stored.length,
+          'contentType': 'image/jpeg',
+          'createdAt': _now(),
+        });
         break;
       } on FirebaseException catch (e) {
-        if (attempt >= 2 || e.code != 'unauthorized') rethrow;
+        if (attempt >= 2 || e.code != 'permission-denied') rethrow;
         version++;
       }
     }
@@ -147,8 +163,9 @@ class VerificationRepository {
     final doc = DocVersion(
       type: type,
       version: version,
-      path: ref.fullPath,
-      sha256: sha256Hex(jpegBytes),
+      // مسار منطقي (مفتاح للملف)، مش مسار Storage فعلي.
+      path: 'captain_docs/$uid/${type.value}/v$version.jpg',
+      sha256: sha256Hex(stored),
       capturedAt: now,
       expiresAt: expiresAt,
       number: number,
@@ -228,16 +245,23 @@ class VerificationRepository {
         return l;
       });
 
-  /// قراءة مستند خاص بطريقة موثّقة (مش بروابط عامة). null لو فشل.
+  DocumentReference<Map<String, dynamic>> _fileRef(String uid, String type, int version) =>
+      _ref(uid).collection('files').doc('${type}_v$version');
+
+  /// قراءة مستند خاص (مش بروابط عامة). null لو مش موجود/فشل.
   Future<Uint8List?> readDocBytes(String path) async {
     try {
-      return await _st.ref(path).getData(10 * 1024 * 1024);
+      final m = _docPath.firstMatch(path);
+      if (m == null) return null;
+      final snap = await _fileRef(m.group(1)!, m.group(2)!, int.parse(m.group(3)!)).get();
+      final b = snap.data()?['bytes'];
+      return b is Blob ? b.bytes : null;
     } catch (_) {
       return null;
     }
   }
 
-  /// تسجيل فتح ملف كابتن (مرة لكل فتح). من الكلاينت: مش مانع لأدمن بيقرأ Storage مباشرة.
+  /// تسجيل فتح ملف كابتن (مرة لكل فتح). من الكلاينت: مش مانع لأدمن بيقرأ Firestore مباشرة.
   Future<void> logAccess(String captainId, String adminId) async {
     try {
       await _ref(captainId).collection('audit').add({
