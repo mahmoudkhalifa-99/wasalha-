@@ -126,17 +126,13 @@ const List<String> centers = [
 /// إيميلات الأدمن (من App.tsx / Login.tsx)
 const List<String> adminEmails = [
   'admin@ashmoun.com',
-  'mahmoudkhalifa.kh91@gmail.com',
-  'sadat.planning.officer@dakahlia.net',
-  'admin@wasalah.com',
-  'wasalah.app@gmail.com',
+  'superadmin@ashmoun.com',
 ];
 
 /// حسابات مستثناة من تأكيد البريد الإلكتروني ومن إلزام رقم الهاتف.
 /// (لازم تطابق دالة exemptEmails() في firestore.rules)
 const List<String> verificationExemptEmails = [
   'admin@ashmoun.com',
-  'mahmoudkhalifa.kh91@gmail.com',
   'superadmin@ashmoun.com',
 ];
 
