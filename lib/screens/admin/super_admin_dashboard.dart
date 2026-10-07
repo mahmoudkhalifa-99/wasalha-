@@ -284,30 +284,43 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: C.slate900,
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: Sh.xxl(),
+        Flexible(
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: C.slate900,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: Sh.xxl(),
+                ),
+                child: const Icon(LucideIcons.shieldCheck,
+                    size: 28, color: Color(0xFF34D399)),
               ),
-              child: const Icon(LucideIcons.shieldCheck,
-                  size: 32, color: Color(0xFF34D399)),
-            ),
-            const SizedBox(width: 16),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text('مركز الإدارة العليا',
-                    style: T.s(24, T.w900, C.slate900, letterSpacing: -0.6)),
-                Text('التحكم المطلق في المنظومة',
-                    style: T.s(9, T.w700, C.slate400, letterSpacing: 1.2)),
-              ],
-            ),
-          ],
+              const SizedBox(width: 12),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text('مركز الإدارة العليا',
+                          style: T.s(22, T.w900, C.slate900,
+                              letterSpacing: -0.6)),
+                    ),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text('التحكم المطلق في المنظومة',
+                          style: T.s(9, T.w700, C.slate400,
+                              letterSpacing: 1.2)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
+        const SizedBox(width: 8),
         Row(
           children: [
             Container(
@@ -453,12 +466,13 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
   }
 
   Widget _statCard({required Color bg, required Widget content, bool border = false}) {
+    final narrow = MediaQuery.of(context).size.width < 560;
     return Container(
-      height: 200,
-      padding: const EdgeInsets.all(28),
+      height: narrow ? 140 : 200,
+      padding: EdgeInsets.all(narrow ? 20 : 28),
       decoration: BoxDecoration(
         color: bg,
-        borderRadius: BorderRadius.circular(48),
+        borderRadius: BorderRadius.circular(narrow ? 32 : 48),
         border: border ? Border.all(color: C.slate100) : null,
         boxShadow: border ? Sh.sm() : Sh.xxl(),
       ),

@@ -123,9 +123,9 @@ const List<String> centers = [
   'الشهداء',
 ];
 
-/// إيميلات الأدمن (من App.tsx / Login.tsx)
+/// إيميلات الأدمن (السوبر أدمن بس). admin@ashmoun.com حساب مشغّل (OPERATOR)
+/// ورتبته بتتظبط من إدارة الأعضاء، مش من هنا.
 const List<String> adminEmails = [
-  'admin@ashmoun.com',
   'superadmin@ashmoun.com',
 ];
 

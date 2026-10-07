@@ -171,21 +171,21 @@ class _OperatorDashboardState extends State<OperatorDashboard> {
           ),
           if (_showScrollTop)
             Positioned(
-              bottom: 40,
-              left: 40,
+              bottom: 24,
+              left: 24,
               child: PressScale(
                 onTap: () => _scrollController.animateTo(0,
                     duration: const Duration(milliseconds: 400),
                     curve: Curves.easeOut),
                 child: Container(
-                  padding: const EdgeInsets.all(24),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: C.slate900,
                     shape: BoxShape.circle,
                     boxShadow: Sh.xxl(),
                   ),
                   child: const Icon(LucideIcons.arrowUp,
-                      size: 32, color: C.white),
+                      size: 24, color: C.white),
                 ),
               ),
             ),
