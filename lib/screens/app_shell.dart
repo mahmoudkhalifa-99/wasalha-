@@ -52,6 +52,8 @@ class _AppShellState extends State<AppShell> {
   // بدل ما الشاشة تفضل تترعش (الكتابة المحلية بتظهر الوثيقة ثم السيرفر يرفضها ويتكرر).
   String? _provisionAttemptedUid;
   bool _accountError = false;
+  // مستخدم جوجل جديد لازم يختار (عميل / كابتن) قبل إنشاء وثيقته
+  ({String uid, String email, String displayName})? _pendingProfile;
   bool _showNotifications = false;
   bool _showSupport = false;
   int _unreadCount = 0;
@@ -99,6 +101,7 @@ class _AppShellState extends State<AppShell> {
           _notifKey = null;
           _userSig = '';
           _provisionAttemptedUid = null;
+          _pendingProfile = null;
           NotificationService.stop();
           if (!mounted) return;
           setState(() {
@@ -133,6 +136,7 @@ class _AppShellState extends State<AppShell> {
         final data = AppUser.fromMap(raw, docSnap.id);
         if (!mounted) return;
         _provisionAttemptedUid = null;
+        _pendingProfile = null;
         if (_accountError) setState(() => _accountError = false);
         // موقع الكابتن بيتكتب كل ~10 متر: ما نعيدش بناء التطبيق كله بسببه.
         final sig = (Map<String, dynamic>.of(raw)
@@ -182,9 +186,45 @@ class _AppShellState extends State<AppShell> {
           return;
         }
         if (currentUser != null && currentUser.uid == uid) {
-          _provisionAttemptedUid = uid;
           final emailLower = (currentUser.email ?? '').toLowerCase();
           final isAdminEmail = adminEmails.contains(emailLower);
+
+          if (!isAdminEmail) {
+            // مستخدم جوجل جديد: ما نعملوش حساب عميل تلقائي، نسيبه يختار
+            // (عميل / كابتن) ونوع المركبة من نموذج إكمال البيانات.
+            final isGoogle = currentUser.providerData
+                .any((p) => p.providerId == 'google.com');
+            if (isGoogle) {
+              if (mounted) {
+                setState(() {
+                  _pendingProfile = (
+                    uid: uid,
+                    email: currentUser.email ?? '',
+                    displayName: currentUser.displayName ?? ''
+                  );
+                  _user = null;
+                  _loading = false;
+                });
+              }
+              return;
+            }
+            // تسجيل جديد بالإيميل لسه شغال: شاشة التسجيل هي اللي بتكتب
+            // الوثيقة بالرتبة المختارة، فما نسبقهاش.
+            final created = currentUser.metadata.creationTime;
+            if (created != null &&
+                DateTime.now().difference(created) <
+                    const Duration(minutes: 2)) {
+              if (mounted) {
+                setState(() {
+                  _user = null;
+                  _loading = false;
+                });
+              }
+              return;
+            }
+          }
+
+          _provisionAttemptedUid = uid;
 
           final defaultUserData = AppUser(
             id: uid,
@@ -298,7 +338,10 @@ class _AppShellState extends State<AppShell> {
     if (_connectionError) return _connectionErrorScreen();
     if (_accountError) return _accountErrorScreen();
     if (_user == null) {
-      return LoginScreen(onLogin: (u) => setState(() => _user = u));
+      return LoginScreen(
+        onLogin: (u) => setState(() => _user = u),
+        completeProfileFor: _pendingProfile,
+      );
     }
     // لازم يأكد البريد الأول (حسابات الإيميل/الباسورد فقط، الأدمن وجوجل مستثنين)
     if (needsEmailVerification(auth.currentUser)) {

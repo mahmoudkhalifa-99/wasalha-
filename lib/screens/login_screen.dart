@@ -30,7 +30,12 @@ const String _googleSvg = '''
 /// نسخة Flutter من pages/Login.tsx — نفس المنطق والتصميم.
 class LoginScreen extends StatefulWidget {
   final void Function(AppUser user) onLogin;
-  const LoginScreen({super.key, required this.onLogin});
+
+  /// لو المستخدم دخل بجوجل ولسه ملوش وثيقة: التطبيق بيفتح مباشرة نموذج
+  /// اختيار (عميل / كابتن) ونوع المركبة بدل ما يتعمله حساب عميل تلقائي.
+  final ({String uid, String email, String displayName})? completeProfileFor;
+  const LoginScreen(
+      {super.key, required this.onLogin, this.completeProfileFor});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -65,6 +70,42 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // بيانات مستخدم جوجل الضرورية فقط
   ({String uid, String email, String displayName})? _googleUserData;
+
+  @override
+  void initState() {
+    super.initState();
+    _resumeProfile();
+  }
+
+  @override
+  void didUpdateWidget(covariant LoginScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.completeProfileFor != null &&
+        _googleUserData?.uid != widget.completeProfileFor!.uid) {
+      setState(_resumeProfile);
+    }
+  }
+
+  void _resumeProfile() {
+    final r = widget.completeProfileFor;
+    if (r == null) return;
+    _showOnboarding = false;
+    _googleUserData = r;
+    if (_name.text.isEmpty) _name.text = r.displayName;
+    if (_email.text.isEmpty) _email.text = r.email;
+    _isCompletingProfile = true;
+  }
+
+  /// الخروج من نموذج إكمال البيانات (مستخدم جوجل غير مكتمل).
+  Future<void> _cancelCompleteProfile() async {
+    await auth.signOut();
+    if (!mounted) return;
+    setState(() {
+      _isCompletingProfile = false;
+      _googleUserData = null;
+      _errorMsg = null;
+    });
+  }
 
   @override
   void dispose() {
@@ -806,7 +847,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 Text('إكمال بياناتك',
                     textAlign: TextAlign.center,
                     style: T.s(20, T.w900, C.slate900, letterSpacing: -0.5)),
-                Text('خطوة أخيرة للبدء: أضف هاتفك ومنطقتك',
+                Text('اختار نوع حسابك (عميل أو كابتن) وأضف هاتفك ومنطقتك',
                     textAlign: TextAlign.center,
                     style: T.s(12, T.w700, C.slate400)),
               ],
@@ -842,6 +883,12 @@ class _LoginScreenState extends State<LoginScreen> {
             child: _loading
                 ? const Spinner()
                 : _submitText('حفظ البيانات والدخول'),
+          ),
+          _gap(8),
+          TextButton(
+            onPressed: _loading ? null : _cancelCompleteProfile,
+            child: Text('رجوع وتسجيل الخروج',
+                style: T.s(12, T.w700, C.slate400)),
           ),
         ],
       ),
