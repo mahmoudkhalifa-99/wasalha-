@@ -48,6 +48,10 @@ class _AppShellState extends State<AppShell> {
   AppUser? _user;
   bool _loading = true;
   bool _connectionError = false;
+  // لو القواعد رفضت إنشاء وثيقة المستخدم: نحاول مرة واحدة بس ونعرض شاشة خطأ
+  // بدل ما الشاشة تفضل تترعش (الكتابة المحلية بتظهر الوثيقة ثم السيرفر يرفضها ويتكرر).
+  String? _provisionAttemptedUid;
+  bool _accountError = false;
   bool _showNotifications = false;
   bool _showSupport = false;
   int _unreadCount = 0;
@@ -94,10 +98,12 @@ class _AppShellState extends State<AppShell> {
           _notifSub?.cancel();
           _notifKey = null;
           _userSig = '';
+          _provisionAttemptedUid = null;
           NotificationService.stop();
           if (!mounted) return;
           setState(() {
             _user = null;
+            _accountError = false;
             _loading = false;
           });
         }
@@ -126,6 +132,8 @@ class _AppShellState extends State<AppShell> {
         final raw = stripFirestore(docSnap.data()) as Map<String, dynamic>;
         final data = AppUser.fromMap(raw, docSnap.id);
         if (!mounted) return;
+        _provisionAttemptedUid = null;
+        if (_accountError) setState(() => _accountError = false);
         // موقع الكابتن بيتكتب كل ~10 متر: ما نعيدش بناء التطبيق كله بسببه.
         final sig = (Map<String, dynamic>.of(raw)
               ..remove('location')
@@ -162,7 +170,19 @@ class _AppShellState extends State<AppShell> {
         NotificationService.startFor(data.id, data.role.value);
       } else {
         final currentUser = auth.currentUser;
+        if (_provisionAttemptedUid == uid) {
+          // المحاولة السابقة اترفضت: نوقف التكرار ونعرض الخطأ
+          if (mounted) {
+            setState(() {
+              _user = null;
+              _accountError = true;
+              _loading = false;
+            });
+          }
+          return;
+        }
         if (currentUser != null && currentUser.uid == uid) {
+          _provisionAttemptedUid = uid;
           final emailLower = (currentUser.email ?? '').toLowerCase();
           final isAdminEmail = adminEmails.contains(emailLower);
 
@@ -183,7 +203,12 @@ class _AppShellState extends State<AppShell> {
             if (mounted) setState(() => _user = defaultUserData);
           } catch (err) {
             debugPrint('Auto user creation error: $err');
-            if (mounted) setState(() => _user = null);
+            if (mounted) {
+              setState(() {
+                _user = null;
+                _accountError = true;
+              });
+            }
           }
         } else {
           if (mounted) setState(() => _user = null);
@@ -271,6 +296,7 @@ class _AppShellState extends State<AppShell> {
   Widget build(BuildContext context) {
     if (_loading) return _loadingScreen(context);
     if (_connectionError) return _connectionErrorScreen();
+    if (_accountError) return _accountErrorScreen();
     if (_user == null) {
       return LoginScreen(onLogin: (u) => setState(() => _user = u));
     }
@@ -795,6 +821,58 @@ class _AppShellState extends State<AppShell> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _accountErrorScreen() {
+    return Scaffold(
+      backgroundColor: C.slate50,
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(40),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: C.rose50,
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: const Icon(LucideIcons.xCircle,
+                    size: 40, color: C.rose500),
+              ),
+              const SizedBox(height: 24),
+              Text('تعذر إنشاء ملف حسابك',
+                  textAlign: TextAlign.center,
+                  style: T.s(22, T.w900, C.slate800)),
+              const SizedBox(height: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 320),
+                child: Text(
+                    'السيرفر رفض إنشاء بيانات الحساب. سجّل الخروج وحاول تاني، ولو المشكلة مستمرة كلّم الدعم.',
+                    textAlign: TextAlign.center,
+                    style: T.s(12, T.w700, C.slate400)),
+              ),
+              const SizedBox(height: 24),
+              PressScale(
+                onTap: _handleLogout,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  decoration: BoxDecoration(
+                    color: C.emerald600,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Text('تسجيل الخروج',
+                      style: T.s(16, T.w900, C.white)),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
