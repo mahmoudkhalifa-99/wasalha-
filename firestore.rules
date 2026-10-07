@@ -14,7 +14,6 @@ service cloud.firestore {
     function adminEmails() {
       // لازم تطابق adminEmails في lib/constants.dart
       return [
-        'admin@ashmoun.com',
         'superadmin@ashmoun.com'
       ];
     }
