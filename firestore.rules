@@ -15,10 +15,7 @@ service cloud.firestore {
       // لازم تطابق adminEmails في lib/constants.dart
       return [
         'admin@ashmoun.com',
-        'mahmoudkhalifa.kh91@gmail.com',
-        'sadat.planning.officer@dakahlia.net',
-        'admin@wasalah.com',
-        'wasalah.app@gmail.com'
+        'superadmin@ashmoun.com'
       ];
     }
 
@@ -26,7 +23,6 @@ service cloud.firestore {
     function exemptEmails() {
       return [
         'admin@ashmoun.com',
-        'mahmoudkhalifa.kh91@gmail.com',
         'superadmin@ashmoun.com'
       ];
     }
