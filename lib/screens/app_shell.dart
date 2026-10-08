@@ -381,7 +381,7 @@ class _AppShellState extends State<AppShell> {
         onLogout: _handleLogout,
       );
     }
-    // حساب معطّل: مفيش استخدام، ومحدش يرجّعه غير المطوّر
+    // حساب معطّل: مفيش استخدام لحد ما السوبر أدمن يفعّله
     if (_user!.status == UserStatus.suspended) {
       return SuspendedScreen(name: _user!.name, onLogout: _handleLogout);
     }

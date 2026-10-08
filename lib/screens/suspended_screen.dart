@@ -8,7 +8,7 @@ import '../theme/app_shadows.dart';
 import '../theme/app_text.dart';
 import '../widgets/common.dart';
 
-/// شاشة الحساب المعطّل: المستخدم مش بيقدر يكمل، ومحدش يرجّع حسابه غير المطوّر.
+/// شاشة الحساب المعطّل: المستخدم مش بيقدر يكمل، والإدارة هي اللي بترجّع تفعيله.
 class SuspendedScreen extends StatelessWidget {
   final String name;
   final Future<void> Function() onLogout;
@@ -59,7 +59,7 @@ class SuspendedScreen extends StatelessWidget {
                         style: T.s(24, T.w900, C.slate900, letterSpacing: -0.5)),
                     const SizedBox(height: 10),
                     Text(
-                        'لا يمكنك استخدام التطبيق بهذا الحساب حالياً. استرجاع الحساب بيتم عن طريق المطوّر فقط.',
+                        'لا يمكنك استخدام التطبيق بهذا الحساب حالياً. استرجاع الحساب بيتم عن طريق الإدارة.',
                         textAlign: TextAlign.center,
                         style: T.s(12, T.w700, C.slate500, height: 1.7)),
                     const SizedBox(height: 22),
@@ -72,7 +72,7 @@ class SuspendedScreen extends StatelessWidget {
                           color: const Color(0xFF25D366),
                           borderRadius: BorderRadius.circular(16),
                         ),
-                        child: Text('تواصل مع المطوّر عبر واتساب',
+                        child: Text('تواصل مع الإدارة عبر واتساب',
                             style: T.s(14, T.w900, C.white)),
                       ),
                     ),
