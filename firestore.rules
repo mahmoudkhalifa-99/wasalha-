@@ -136,9 +136,11 @@ service cloud.firestore {
       allow update: if signedIn() && emailOk() && (
           (request.auth.uid == uid && selfUpdateOk())
           || (isAdmin() && adminUpdateOk(uid)));
-      // حذف الحساب غير المؤكد (شاشة "البريد غلط؟") أو حذف المدير
+      // حذف الحساب: غير المؤكد (شاشة "البريد غلط؟")، أو المستخدم لحسابه من جوه التطبيق
+      // (عميل/كابتن فقط — السوبر أدمن والمشغّل لأ)، أو حذف المدير
       allow delete: if signedIn() && (
           (request.auth.uid == uid && request.auth.token.email_verified != true)
+          || (request.auth.uid == uid && resource.data.role in ['CUSTOMER', 'DRIVER'])
           || isAdmin());
     }
 
@@ -328,6 +330,18 @@ service cloud.firestore {
       allow write: if isAdmin()
           && request.resource.data.keys().hasOnly(['enforced', 'termsVersion', 'updatedAt', 'updatedBy'])
           && request.resource.data.enforced is bool;
+    }
+
+    // مفتاح تشغيل/إيقاف التطبيق: { enabled: bool, message: string }
+    // القراءة مفتوحة للكل (شاشة الدخول لازم تعرف الحالة قبل تسجيل الدخول).
+    // الكتابة: السوبر أدمن فقط.
+    match /config/app {
+      allow read: if true;
+      allow write: if isAdmin()
+          && request.resource.data.keys().hasOnly(['enabled', 'message', 'updatedAt', 'updatedBy'])
+          && request.resource.data.enabled is bool
+          && request.resource.data.message is string
+          && request.resource.data.message.size() <= 200;
     }
 
     // ───────────── تقييمات الكباتن ─────────────
