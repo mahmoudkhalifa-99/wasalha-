@@ -744,7 +744,14 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         ),
         _bottomNav(),
         if (_viewingAd != null)
-          AdDetailsView(ad: _viewingAd!, onClose: () => setState(() => _viewingAd = null)),
+          AdDetailsView(
+            ad: _viewingAd!,
+            onClose: () => setState(() => _viewingAd = null),
+            onOrderNow: _viewingAd!.type == 'restaurant' &&
+                    (_viewingAd!.targetId ?? '').isNotEmpty
+                ? () => _openRestaurantFromAd(_viewingAd!)
+                : null,
+          ),
         if (_showManualRest)
           ManualRestaurantView(
             onClose: () => setState(() => _showManualRest = false),
@@ -791,6 +798,31 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
           ),
       ],
     );
+  }
+
+  /// زر "اطلب الآن" في إعلان مربوط بمطعم: يقفل الإعلان ويفتح صفحة المطعم.
+  Future<void> _openRestaurantFromAd(Ad ad) async {
+    // عدّاد النقرات best-effort: لو فشل ما يمنعش فتح المطعم.
+    unawaited(db
+        .collection('ads')
+        .doc(ad.id)
+        .update({'clicks': FieldValue.increment(1)}).catchError((_) {}));
+    Restaurant? rest;
+    for (final r in _restaurants) {
+      if (r.id == ad.targetId) {
+        rest = r;
+        break;
+      }
+    }
+    if (rest == null) {
+      await showAppAlert(context, 'المطعم ده مش متاح حالياً');
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _viewingAd = null;
+      _viewingRestaurant = rest;
+    });
   }
 
   // ── الحالة الافتراضية: طلب جديد ──
@@ -2204,7 +2236,11 @@ class AdsSlider extends StatelessWidget {
 class AdDetailsView extends StatelessWidget {
   final Ad ad;
   final VoidCallback onClose;
-  const AdDetailsView({super.key, required this.ad, required this.onClose});
+
+  /// لو الإعلان مربوط بمطعم: زر "اطلب الآن" بيفتح صفحة المطعم.
+  final VoidCallback? onOrderNow;
+  const AdDetailsView(
+      {super.key, required this.ad, required this.onClose, this.onOrderNow});
 
   @override
   Widget build(BuildContext context) {
@@ -2283,14 +2319,49 @@ class AdDetailsView extends StatelessWidget {
                                   textAlign: TextAlign.right,
                                   style: T.s(13, T.w700, C.slate500,
                                       height: 1.7)),
-                              if (ad.whatsappNumber != null) ...[
+                              if (onOrderNow != null) ...[
+                                const SizedBox(height: 24),
+                                PressScale(
+                                  onTap: onOrderNow!,
+                                  child: Container(
+                                    width: double.infinity,
+                                    padding:
+                                        const EdgeInsets.symmetric(vertical: 24),
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color: C.emerald600,
+                                      borderRadius: BorderRadius.circular(32),
+                                      boxShadow: Sh.xl(),
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        const Icon(LucideIcons.utensils,
+                                            size: 24, color: C.white),
+                                        const SizedBox(width: 16),
+                                        Text(
+                                            ad.ctaText.isNotEmpty &&
+                                                    ad.ctaText !=
+                                                        'استفد من العرض الآن'
+                                                ? ad.ctaText
+                                                : 'اطلب الآن',
+                                            style: T.s(16, T.w900, C.white)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              if ((ad.whatsappNumber ?? '').isNotEmpty) ...[
                                 const SizedBox(height: 24),
                                 PressScale(
                                   onTap: () async {
-                                    await db
-                                        .collection('ads')
-                                        .doc(ad.id)
-                                        .update({'clicks': FieldValue.increment(1)});
+                                    try {
+                                      await db
+                                          .collection('ads')
+                                          .doc(ad.id)
+                                          .update(
+                                              {'clicks': FieldValue.increment(1)});
+                                    } catch (_) {}
                                     final uri = Uri.parse(
                                         'https://wa.me/${ad.whatsappNumber}');
                                     await launchUrl(uri,

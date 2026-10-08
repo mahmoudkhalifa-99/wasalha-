@@ -36,6 +36,10 @@ class _AdminAdsManagerState extends State<AdminAdsManager> {
   final _ctaCtrl = TextEditingController(text: 'استفد من العرض الآن');
   final _whatsappCtrl = TextEditingController();
   String _imageUrl = '';
+  // المطعم المربوط بالإعلان (زر "اطلب الآن" بيفتح صفحته) — null = من غير ربط
+  String? _restaurantId;
+  List<Restaurant> _restaurants = [];
+  StreamSubscription? _subRestaurants;
   int _views = 0;
   int _clicks = 0;
   int? _createdAt;
@@ -43,6 +47,16 @@ class _AdminAdsManagerState extends State<AdminAdsManager> {
   @override
   void initState() {
     super.initState();
+    _subRestaurants =
+        db.collection('restaurants').orderBy('name').snapshots().listen((snap) {
+      if (!mounted) return;
+      setState(() {
+        _restaurants = snap.docs
+            .map((d) => Restaurant.fromMap(
+                stripFirestore(d.data()) as Map<String, dynamic>, d.id))
+            .toList();
+      });
+    }, onError: (e) => debugPrint('restaurants stream: $e'));
     _sub = db.collection('ads').snapshots().listen((snap) {
       if (!mounted) return;
       setState(() {
@@ -57,6 +71,7 @@ class _AdminAdsManagerState extends State<AdminAdsManager> {
   @override
   void dispose() {
     _sub?.cancel();
+    _subRestaurants?.cancel();
     _titleCtrl.dispose();
     _descCtrl.dispose();
     _ctaCtrl.dispose();
@@ -73,6 +88,7 @@ class _AdminAdsManagerState extends State<AdminAdsManager> {
       _descCtrl.clear();
       _ctaCtrl.text = 'استفد من العرض الآن';
       _whatsappCtrl.clear();
+      _restaurantId = null;
       _imageUrl = '';
       _views = 0;
       _clicks = 0;
@@ -87,6 +103,7 @@ class _AdminAdsManagerState extends State<AdminAdsManager> {
       _descCtrl.text = ad.description;
       _ctaCtrl.text = ad.ctaText;
       _whatsappCtrl.text = ad.whatsappNumber ?? '';
+      _restaurantId = ad.type == 'restaurant' ? ad.targetId : null;
       _imageUrl = ad.imageUrl;
       _views = ad.views;
       _clicks = ad.clicks;
@@ -129,8 +146,11 @@ class _AdminAdsManagerState extends State<AdminAdsManager> {
         description: _descCtrl.text,
         imageUrl: _imageUrl,
         ctaText: _ctaCtrl.text.isEmpty ? 'استفد من العرض الآن' : _ctaCtrl.text,
-        type: 'special_offer',
-        whatsappNumber: _whatsappCtrl.text.replaceAll(RegExp(r'\s'), ''),
+        type: _restaurantId != null ? 'restaurant' : 'special_offer',
+        targetId: _restaurantId,
+        whatsappNumber: _whatsappCtrl.text.replaceAll(RegExp(r'\s'), '').isEmpty
+            ? null
+            : _whatsappCtrl.text.replaceAll(RegExp(r'\s'), ''),
         isActive: true,
         displayOrder: 0,
         views: _views,
@@ -396,6 +416,8 @@ class _AdminAdsManagerState extends State<AdminAdsManager> {
                       ltr: true, hint: '2010...')),
             ],
           ),
+          const SizedBox(height: 16),
+          _restaurantPicker(),
           const SizedBox(height: 20),
           Container(
             padding: const EdgeInsets.all(24),
@@ -487,6 +509,59 @@ class _AdminAdsManagerState extends State<AdminAdsManager> {
           ),
         ],
       ),
+    );
+  }
+
+  /// اختيار مطعم لربط الإعلان بيه: زر "اطلب الآن" في الإعلان بيفتح صفحة المطعم.
+  Widget _restaurantPicker() {
+    // لو المطعم المربوط اتحذف، نعرض "من غير ربط" بدل ما الـ Dropdown يقع.
+    final value = _restaurants.any((r) => r.id == _restaurantId)
+        ? _restaurantId
+        : null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Text('ربط الإعلان بمطعم (زر اطلب الآن)',
+              textAlign: TextAlign.right, style: T.s(10, T.w900, C.slate400)),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: C.slate50,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String?>(
+              isExpanded: true,
+              value: value,
+              style: T.s(12, T.w900, C.slate900),
+              items: [
+                DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('من غير ربط بمطعم',
+                        style: T.s(12, T.w700, C.slate500))),
+                for (final r in _restaurants)
+                  DropdownMenuItem<String?>(
+                      value: r.id,
+                      child: Text(r.name,
+                          overflow: TextOverflow.ellipsis,
+                          style: T.s(12, T.w900, C.slate900))),
+              ],
+              onChanged: (v) => setState(() {
+                _restaurantId = v;
+                if (v != null &&
+                    (_ctaCtrl.text.isEmpty ||
+                        _ctaCtrl.text == 'استفد من العرض الآن')) {
+                  _ctaCtrl.text = 'اطلب الآن';
+                }
+              }),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
