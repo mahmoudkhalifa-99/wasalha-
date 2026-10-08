@@ -139,7 +139,7 @@ class ConfigPricing {
 const configDefaultPricing = ConfigPricing(
   basePrice: 5,
   pricePerKm: 4,
-  minPrice: 30,
+  minPrice: 25, // = minTripFare في pricing.dart
   maxPrice: 900,
   sameVillagePrice: 25,
   deliveryBasePrice: 30,

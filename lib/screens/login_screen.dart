@@ -465,7 +465,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         Padding(
                           padding: const EdgeInsets.only(top: 24),
                           child: Text(
-                            'جميع الحقوق محفوظة © تطبيق وصلها المنوفية • M.R Mahmoud Khalifa',
+                            '• تطبيق وصلها المنوفية •\nجميع الحقوق محفوظة © M.R Mahmoud Khalifa',
                             textAlign: TextAlign.center,
                             style: T.s(12, T.w700, C.slate400),
                           ),

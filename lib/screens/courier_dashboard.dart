@@ -13,6 +13,7 @@ import '../features/tracking/models/tracking_models.dart' show GeoFix;
 import '../features/tracking/services/driver_location_source.dart';
 import '../features/verification/ui/verification_banner.dart';
 import '../models/models.dart';
+import '../pricing.dart';
 import '../services/back_interceptor.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
@@ -23,6 +24,7 @@ import '../theme/app_text.dart';
 import '../utils.dart' as utils;
 import '../widgets/captains_offers_map.dart' show orderPickupPoint, orderDropoffPoint;
 import '../widgets/common.dart';
+import '../widgets/fare_breakdown.dart';
 import '../widgets/leaflet_map.dart';
 import '../widgets/order_details_panel.dart';
 import 'activity_view.dart';
@@ -516,8 +518,10 @@ class _CourierDashboardState extends State<CourierDashboard> {
   }
 
   Future<void> _handleSendOffer(String orderId) async {
-    final price = double.tryParse(_offerPriceCtrl.text);
-    if (price == null || _isSubmitting) return;
+    final typed = double.tryParse(_offerPriceCtrl.text);
+    if (typed == null || _isSubmitting) return;
+    // الحد الأدنى 25 ج.م: أي عرض أقل بيترفع تلقائياً لـ 25
+    final price = finalFare(typed);
     setState(() => _isSubmitting = true);
     try {
       // رسالة ودّية لو الحساب مش مسموح له يستقبل طلبات (الحجب الفعلي في قواعد Firestore).
@@ -864,6 +868,13 @@ class _CourierDashboardState extends State<CourierDashboard> {
                     ),
                   ),
                 ),
+                const SizedBox(height: 16),
+                // قيمة الرحلة ← العمولة ← صافي المستحق (بنفس قاعدة الحد الأدنى 25)
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: _offerPriceCtrl,
+                  builder: (_, v, __) => FareBreakdownView(
+                      fare: finalFare(double.tryParse(v.text) ?? o.price)),
+                ),
                 const SizedBox(height: 24),
                 Row(
                   children: [
@@ -915,7 +926,7 @@ class _CourierDashboardState extends State<CourierDashboard> {
                         borderRadius: BorderRadius.circular(35),
                         boxShadow: Sh.xxl(),
                       ),
-                      child: Text('${o.price.toInt()}',
+                      child: Text('${finalFare(o.price).toInt()}',
                           style: T.s(30, T.w900, C.emerald400)),
                     ),
                     const SizedBox(width: 16),
@@ -969,7 +980,7 @@ class _CourierDashboardState extends State<CourierDashboard> {
                 PressScale(
                   onTap: () => setState(() {
                     _showOfferInputFor = o.id;
-                    _offerPriceCtrl.text = o.price.toStringAsFixed(0);
+                    _offerPriceCtrl.text = finalFare(o.price).toStringAsFixed(0);
                   }),
                   child: Container(
                     width: double.infinity,
@@ -1054,6 +1065,8 @@ class _CourierDashboardState extends State<CourierDashboard> {
                 ],
               ),
               const SizedBox(height: 20),
+              FareBreakdownView(fare: finalFare(tripFareOf(order))),
+              const SizedBox(height: 16),
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(

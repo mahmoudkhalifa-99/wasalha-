@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../models/models.dart';
+import '../pricing.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text.dart';
 import 'common.dart';
+import 'fare_breakdown.dart';
 
 /// معاينة صورة (روشتة/علبة دواء) مع تكبير بملء الشاشة عند الضغط.
 class PrescriptionPreview extends StatelessWidget {
@@ -195,8 +197,13 @@ class OrderDetailsPanel extends StatelessWidget {
           if (o.distance > 0)
             _row(Icons.straighten_rounded, 'المسافة',
                 '${o.distance.toStringAsFixed(1)} كم'),
-          _row(Icons.payments_rounded, 'السعر المبدئي',
-              '${o.price.toInt()} ج.م'),
+          if (o.foodItems != null && o.foodItems!.isNotEmpty)
+            _row(Icons.payments_rounded, 'إجمالي الطلب (أصناف + توصيل)',
+                '${o.price.toInt()} ج.م'),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: FareBreakdownView(fare: finalFare(tripFareOf(o))),
+          ),
           if (items.isNotEmpty) ...[
             const SizedBox(height: 4),
             Text('الأصناف:',

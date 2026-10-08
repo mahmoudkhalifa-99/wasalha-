@@ -9,6 +9,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../config_constants.dart';
+import '../pricing.dart';
 import '../core/map/geo_utils.dart' as geo;
 import '../features/tracking/models/tracking_models.dart' show GeoFix;
 import '../features/tracking/services/captain_locations.dart';
@@ -427,14 +428,14 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     if (!_hasPickup || !_hasDropoff) return 0;
     final p = _pickupVillage, d = _dropoffVillage;
     if (p != null && d != null && p.id == d.id) {
-      return configDefaultPricing.sameVillagePrice;
+      return finalFare(configDefaultPricing.sameVillagePrice);
     }
     final baseFare =
         configDefaultPricing.basePrice + (_actualRoadDist * configDefaultPricing.pricePerKm);
     final multiplier = configDefaultPricing.multipliers[_selectedVehicle] ?? 1.0;
     final v = baseFare * multiplier;
-    return (v < configDefaultPricing.minPrice ? configDefaultPricing.minPrice : v)
-        .roundToDouble();
+    // الحد الأدنى 25 ج.م لكل المركبات (finalFare)
+    return finalFare(v).roundToDouble();
   }
 
   Future<void> _handleAcceptOffer(Offer offer) async {
@@ -449,12 +450,12 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         'driverPhone': offer.driverPhone,
         'driverPhoto': offer.driverPhoto,
         'acceptedAt': DateTime.now().millisecondsSinceEpoch,
-        'price': offer.price,
+        'price': finalFare(offer.price),
       });
       await NotificationService.notifyUser(
         userId: offer.driverId,
         title: 'تم قبول عرضك ✅',
-        body: '${user.name} وافق على عرضك ${offer.price.toInt()} ج.م — ابدأ المشوار',
+        body: '${user.name} وافق على عرضك ${finalFare(offer.price).toInt()} ج.م — ابدأ المشوار',
         type: 'SUCCESS',
         key: 'accepted_${order.id}',
         orderId: order.id,
@@ -1689,7 +1690,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                     ),
                     child: _acceptingOfferId == offer.id
                         ? const Spinner()
-                        : Text('قبول ${offer.price.toInt()} ج.م',
+                        : Text('قبول ${finalFare(offer.price).toInt()} ج.م',
                             style: T.s(11, T.w900, C.white)),
                   ),
                 ),
@@ -2833,12 +2834,9 @@ class _RestaurantMenuViewState extends State<RestaurantMenuView> {
     final destName = _currentVillage?.name ?? _point?.placeName;
     if (destName == null) return 0;
     final isSameVillage = widget.restaurant.address == destName;
-    if (isSameVillage) return configDefaultPricing.sameVillagePrice;
+    if (isSameVillage) return finalFare(configDefaultPricing.sameVillagePrice);
     final calc = _roadDist * configDefaultPricing.foodOutsidePricePerKm;
-    final rounded = calc.roundToDouble();
-    return rounded < configDefaultPricing.minPrice
-        ? configDefaultPricing.minPrice
-        : rounded;
+    return finalFare(calc.roundToDouble());
   }
 
   double get _finalEstimatedPrice => _totalFoodItemsPrice + _deliveryPrice;

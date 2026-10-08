@@ -74,7 +74,7 @@ final List<Zone> ashmounZones = [
     pricing: Pricing(
       basePrice: 12,
       pricePerKm: 6,
-      minPrice: 20,
+      minPrice: 25,
       maxPrice: 400,
       sameVillagePrice: 15,
       multipliers: {
@@ -100,7 +100,7 @@ final Pricing defaultPricing = ashmounZones.isNotEmpty
     : Pricing(
         basePrice: 12,
         pricePerKm: 6,
-        minPrice: 20,
+        minPrice: 25,
         maxPrice: 400,
         sameVillagePrice: 15,
         multipliers: {
