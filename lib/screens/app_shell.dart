@@ -11,6 +11,8 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../app_router.dart';
 import '../constants.dart';
 import '../models/models.dart';
+import '../services/account_deletion.dart';
+import '../services/app_status_service.dart';
 import '../services/back_interceptor.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
@@ -25,6 +27,8 @@ import 'admin/admin_edit_user.dart';
 import 'admin/admin_geography_manager.dart';
 import 'admin/admin_restaurant_manager.dart';
 import 'admin/admin_users_list.dart';
+import 'app_disabled_screen.dart';
+import 'onboarding_screen.dart' show OnboardingPrefs;
 import 'admin/operator_dashboard.dart';
 import 'admin/super_admin_dashboard.dart';
 import 'courier_dashboard.dart';
@@ -58,6 +62,11 @@ class _AppShellState extends State<AppShell> {
   bool _showSupport = false;
   int _unreadCount = 0;
   bool _isLogoutModalOpen = false;
+  // مفتاح تشغيل التطبيق (بيتحكم فيه السوبر أدمن). الافتراضي: شغال.
+  AppStatus _appStatus = AppStatus.on;
+  // السوبر أدمن بيفتح شاشة الدخول حتى والتطبيق متوقف
+  bool _adminLoginRequested = false;
+  StreamSubscription<AppStatus>? _statusSub;
 
   final List<String> _stack = ['/'];
   String get _location => _stack.last;
@@ -74,6 +83,9 @@ class _AppShellState extends State<AppShell> {
   void initState() {
     super.initState();
     _listenAuth();
+    _statusSub = AppStatusService.watch().listen((st) {
+      if (mounted) setState(() => _appStatus = st);
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) PermissionService.requestOnFirstLaunch(context);
     });
@@ -82,6 +94,7 @@ class _AppShellState extends State<AppShell> {
   @override
   void dispose() {
     _authSub?.cancel();
+    _statusSub?.cancel();
     _userSub?.cancel();
     _notifSub?.cancel();
     _tokenSub?.cancel();
@@ -135,6 +148,8 @@ class _AppShellState extends State<AppShell> {
         final raw = stripFirestore(docSnap.data()) as Map<String, dynamic>;
         final data = AppUser.fromMap(raw, docSnap.id);
         if (!mounted) return;
+        // مستخدم داخل بالفعل = مش محتاج شاشة التعريف لو خرج ودخل بعدين
+        OnboardingPrefs.markSeen();
         _provisionAttemptedUid = null;
         _pendingProfile = null;
         if (_accountError) setState(() => _accountError = false);
@@ -173,6 +188,8 @@ class _AppShellState extends State<AppShell> {
         _setupPush(data.id);
         NotificationService.startFor(data.id, data.role.value);
       } else {
+        // حذف الحساب شغال: وثيقة المستخدم اتمسحت قصداً، ما نعيدش إنشاءها
+        if (AccountDeletion.inProgress) return;
         final currentUser = auth.currentUser;
         if (_provisionAttemptedUid == uid) {
           // المحاولة السابقة اترفضت: نوقف التكرار ونعرض الخطأ
@@ -311,6 +328,7 @@ class _AppShellState extends State<AppShell> {
     _pushForUserId = null;
     if (!mounted) return;
     setState(() {
+      _adminLoginRequested = false;
       _user = null;
       _loading = false;
       _unreadCount = 0;
@@ -337,6 +355,17 @@ class _AppShellState extends State<AppShell> {
     if (_loading) return _loadingScreen(context);
     if (_connectionError) return _connectionErrorScreen();
     if (_accountError) return _accountErrorScreen();
+    // التطبيق متوقف من السوبر أدمن: الكل يشوف شاشة الإيقاف ما عدا الأدمن
+    if (!_appStatus.enabled &&
+        _user?.role != UserRole.admin &&
+        !(_user == null && _adminLoginRequested)) {
+      return AppDisabledScreen(
+        message: _appStatus.message,
+        signedIn: _user != null,
+        onLogout: _handleLogout,
+        onAdminLogin: () => setState(() => _adminLoginRequested = true),
+      );
+    }
     if (_user == null) {
       return LoginScreen(
         onLogin: (u) => setState(() => _user = u),

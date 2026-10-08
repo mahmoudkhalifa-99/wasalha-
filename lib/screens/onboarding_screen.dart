@@ -1,10 +1,33 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme/app_colors.dart';
 import '../theme/app_shadows.dart';
 import '../theme/app_text.dart';
 import '../widgets/common.dart';
+
+/// شاشة التعريف بتظهر مرة واحدة بس بعد أول تثبيت للتطبيق.
+class OnboardingPrefs {
+  static const _key = 'onboarding_seen_v1';
+
+  static Future<bool> seen() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_key) == true;
+    } catch (_) {
+      // لو التخزين فشل، ما نزعجش المستخدم بالشاشة في كل مرة
+      return true;
+    }
+  }
+
+  static Future<void> markSeen() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_key, true);
+    } catch (_) {}
+  }
+}
 
 class _Slide {
   final String title;

@@ -11,6 +11,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_shadows.dart';
 import '../theme/app_text.dart';
 import '../widgets/common.dart';
+import '../widgets/delete_account_dialog.dart';
 
 /// نسخة Flutter من pages/ProfileView.tsx
 class ProfileView extends StatefulWidget {
@@ -160,6 +161,8 @@ class _ProfileViewState extends State<ProfileView> {
                       _basicInfoCard(),
                       const SizedBox(height: 16),
                       _logoutButton(),
+                      const SizedBox(height: 12),
+                      _deleteAccountButton(),
                       const SizedBox(height: 24),
                       Column(
                         children: [
@@ -508,6 +511,29 @@ class _ProfileViewState extends State<ProfileView> {
                 ),
               ],
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _deleteAccountButton() {
+    return PressScale(
+      scale: 0.99,
+      onTap: () => showDeleteAccountDialog(context, widget.user),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        decoration: BoxDecoration(
+          color: C.white,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: C.rose200.withOpacity(0.7)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(LucideIcons.trash2, size: 18, color: C.rose600),
+            const SizedBox(width: 10),
+            Text('حذف حسابي نهائياً', style: T.s(14, T.w800, C.rose600)),
           ],
         ),
       ),

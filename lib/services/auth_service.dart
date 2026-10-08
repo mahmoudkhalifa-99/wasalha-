@@ -53,6 +53,29 @@ Future<UserCredential> signInWithGoogle() async {
   return auth.signInWithCredential(credential);
 }
 
+/// إعادة تأكيد هوية مستخدم جوجل (مطلوبة قبل العمليات الحساسة زي حذف الحساب).
+Future<void> reauthenticateWithGoogle() async {
+  final user = auth.currentUser;
+  if (user == null) {
+    throw FirebaseAuthException(code: 'no-current-user');
+  }
+  try {
+    await _googleSignIn.signOut();
+  } catch (e) {
+    debugPrint('google signOut before reauth failed: $e');
+  }
+  final account = await _googleSignIn.signIn();
+  if (account == null) throw const GoogleSignInCancelledException();
+  final g = await account.authentication;
+  if (g.idToken == null && g.accessToken == null) {
+    throw FirebaseAuthException(code: 'missing-id-token');
+  }
+  await user.reauthenticateWithCredential(GoogleAuthProvider.credential(
+    idToken: g.idToken,
+    accessToken: g.accessToken,
+  ));
+}
+
 /// هل الخطأ ده معناه إن المستخدم لغى شاشة جوجل بنفسه؟
 bool isGoogleSignInCancelled(Object error) {
   if (error is GoogleSignInCancelledException) return true;

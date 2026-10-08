@@ -42,7 +42,8 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  bool _showOnboarding = true;
+  // null = لسه بنقرا هل المستخدم شاف الشاشة قبل كده (أول تثبيت فقط)
+  bool? _showOnboarding;
   bool _isRegistering = false;
   bool _isCompletingProfile = false;
   UserRole _role = UserRole.customer; // CUSTOMER | DRIVER
@@ -75,6 +76,15 @@ class _LoginScreenState extends State<LoginScreen> {
   void initState() {
     super.initState();
     _resumeProfile();
+    if (_showOnboarding == null) _loadOnboardingState();
+  }
+
+  Future<void> _loadOnboardingState() async {
+    final seen = await OnboardingPrefs.seen();
+    if (!mounted) return;
+    setState(() => _showOnboarding = !seen);
+    // نسجّلها شافها من أول ظهور، فحتى لو قفل التطبيق في النص ما تتكررش
+    if (!seen) OnboardingPrefs.markSeen();
   }
 
   @override
@@ -428,7 +438,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_showOnboarding) {
+    if (_showOnboarding == null) {
+      // لحظة قصيرة لقراءة الإعداد: خلفية فاضية بدل ما شاشة الدخول تلمع
+      return const Scaffold(backgroundColor: C.slate50);
+    }
+    if (_showOnboarding == true) {
       return OnboardingScreen(
           onComplete: () => setState(() => _showOnboarding = false));
     }
