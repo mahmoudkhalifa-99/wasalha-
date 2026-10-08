@@ -118,16 +118,13 @@ service cloud.firestore {
     }
 
     // قيود تعديل المدير على الحسابات
+    // التعطيل لحسابات غير الأدمن وماينفعش المدير يعطّل نفسه. إعادة التفعيل مسموحة للسوبر أدمن.
     function adminUpdateOk(uid) {
       let before = resource.data.get('status', 'APPROVED');
       let after = request.resource.data.get('status', 'APPROVED');
-      return
-        // الحساب المعطّل مينفعش يتفعّل من التطبيق: الرجوع للمطوّر (من الكونسول)
-        (before != 'SUSPENDED' || after == 'SUSPENDED')
-        // التعطيل لحسابات غير الأدمن، وماينفعش المدير يعطّل نفسه
-        && (after != 'SUSPENDED'
-            || before == 'SUSPENDED'
-            || (resource.data.role != 'ADMIN' && uid != request.auth.uid));
+      return after != 'SUSPENDED'
+          || before == 'SUSPENDED'
+          || (resource.data.role != 'ADMIN' && uid != request.auth.uid);
     }
 
     match /users/{uid} {
