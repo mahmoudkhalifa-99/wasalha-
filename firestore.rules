@@ -440,6 +440,10 @@ service cloud.firestore {
     match /ads/{id} {
       allow read: if signedIn();
       allow write: if isAdmin();
+      // عدّاد النقرات: أي مستخدم مسجّل يزوّد clicks بواحد بس (زر اطلب الآن / واتساب)
+      allow update: if signedIn()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['clicks'])
+        && request.resource.data.clicks == resource.data.clicks + 1;
     }
     match /restaurants/{id} {
       allow read: if signedIn();
