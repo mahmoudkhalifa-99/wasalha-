@@ -262,7 +262,7 @@ workflows:
         script: flutter test
 
       - name: توليد أيقونة iOS
-        script: dart run flutter_launcher_icons -f flutter_launcher_icons-ios.yaml
+        script: dart run flutter_launcher_icons -f tools/launcher_icons_ios.yaml
 
       - name: تثبيت الـ Pods
         script: cd ios && pod install
