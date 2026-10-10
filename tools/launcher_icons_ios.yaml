@@ -1,7 +1,0 @@
-# أيقونة iOS (بتتشغّل في workflow الـ iOS بس): dart run flutter_launcher_icons -f tools/launcher_icons_ios.yaml
-# App Store محتاج أيقونة 1024x1024 بدون شفافية. لو عندك أيقونة 1024 حطها هنا بدل icon-512.
-flutter_launcher_icons:
-  android: false
-  ios: true
-  remove_alpha_ios: true
-  image_path: "assets/images/icon-512.png"
