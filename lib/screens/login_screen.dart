@@ -15,6 +15,9 @@ import '../theme/app_shadows.dart';
 import '../theme/app_text.dart';
 import '../widgets/common.dart';
 import '../widgets/form_fields.dart';
+import '../services/onboarding_prefs.dart';
+import '../services/remembered_login.dart';
+import '../services/session_prefs.dart';
 import 'onboarding_screen.dart';
 import 'verify_email_screen.dart' show needsEmailVerification;
 
@@ -42,8 +45,8 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  // null = لسه بنقرا هل المستخدم شاف الشاشة قبل كده (أول تثبيت فقط)
-  bool? _showOnboarding;
+  // الترحيب بيظهر أول مرة بعد التثبيت بس
+  bool _showOnboarding = !OnboardingPrefs.seen;
   bool _isRegistering = false;
   bool _isCompletingProfile = false;
   UserRole _role = UserRole.customer; // CUSTOMER | DRIVER
@@ -63,7 +66,7 @@ class _LoginScreenState extends State<LoginScreen> {
   // Login
   final _loginEmail = TextEditingController();
   final _loginPassword = TextEditingController();
-  bool _rememberMe = false;
+  bool _rememberMe = SessionPrefs.rememberMe; // الافتراضي مفعّل
 
   // General
   bool _loading = false;
@@ -76,15 +79,6 @@ class _LoginScreenState extends State<LoginScreen> {
   void initState() {
     super.initState();
     _resumeProfile();
-    if (_showOnboarding == null) _loadOnboardingState();
-  }
-
-  Future<void> _loadOnboardingState() async {
-    final seen = await OnboardingPrefs.seen();
-    if (!mounted) return;
-    setState(() => _showOnboarding = !seen);
-    // نسجّلها شافها من أول ظهور، فحتى لو قفل التطبيق في النص ما تتكررش
-    if (!seen) OnboardingPrefs.markSeen();
   }
 
   @override
@@ -108,6 +102,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   /// الخروج من نموذج إكمال البيانات (مستخدم جوجل غير مكتمل).
   Future<void> _cancelCompleteProfile() async {
+    await RememberedLogin.clear();
     await auth.signOut();
     if (!mounted) return;
     setState(() {
@@ -233,6 +228,11 @@ class _LoginScreenState extends State<LoginScreen> {
     });
     try {
       final result = await signInWithGoogle();
+      if (_rememberMe) {
+        await RememberedLogin.saveGoogle();
+      } else {
+        await RememberedLogin.clear();
+      }
       final u = result.user!;
       final userSnap = await db.collection('users').doc(u.uid).get();
 
@@ -403,6 +403,12 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         final cred = await auth.signInWithEmailAndPassword(
             email: _loginEmail.text.trim(), password: _loginPassword.text);
+        if (_rememberMe) {
+          await RememberedLogin.savePassword(
+              _loginEmail.text, _loginPassword.text);
+        } else {
+          await RememberedLogin.clear();
+        }
         await _sendVerificationMail(cred.user!);
         final userSnap = await db.collection('users').doc(cred.user!.uid).get();
         if (userSnap.exists) {
@@ -438,13 +444,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_showOnboarding == null) {
-      // لحظة قصيرة لقراءة الإعداد: خلفية فاضية بدل ما شاشة الدخول تلمع
-      return const Scaffold(backgroundColor: C.slate50);
-    }
-    if (_showOnboarding == true) {
+    if (_showOnboarding) {
       return OnboardingScreen(
-          onComplete: () => setState(() => _showOnboarding = false));
+          onComplete: () {
+            OnboardingPrefs.markSeen();
+            setState(() => _showOnboarding = false);
+          });
     }
 
     final md = isMd(context);
@@ -1064,13 +1069,19 @@ class _LoginScreenState extends State<LoginScreen> {
               children: [
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTap: () => setState(() => _rememberMe = !_rememberMe),
+                  onTap: () {
+                    setState(() => _rememberMe = !_rememberMe);
+                    SessionPrefs.setRememberMe(_rememberMe);
+                  },
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       MiniCheckbox(
                           value: _rememberMe,
-                          onChanged: (v) => setState(() => _rememberMe = v)),
+                          onChanged: (v) {
+                            setState(() => _rememberMe = v);
+                            SessionPrefs.setRememberMe(v);
+                          }),
                       const SizedBox(width: 8),
                       Text('تذكرني', style: T.s(12, T.w700, C.slate500)),
                     ],

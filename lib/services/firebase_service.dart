@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 
 import '../firebase_options.dart';
 
@@ -12,7 +14,10 @@ FirebaseFirestore get db => FirebaseFirestore.instance;
 
 /// تهيئة Firebase + إعدادات Firestore (تخزين محلي مفعّل زي نسخة الويب).
 Future<void> initFirebase() async {
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  // iOS: بيقرا إعدادات Firebase من GoogleService-Info.plist (مش من firebase_options).
+  final isIos = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+  await Firebase.initializeApp(
+      options: isIos ? null : DefaultFirebaseOptions.currentPlatform);
   FirebaseFirestore.instance.settings = const Settings(
     persistenceEnabled: true,
     cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,

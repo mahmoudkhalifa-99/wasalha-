@@ -1,17 +1,20 @@
 import 'dart:convert';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../constants.dart';
 import '../models/models.dart';
+import '../services/account_deletion_service.dart';
+import '../services/auth_service.dart'
+    show isGoogleSignInCancelled;
 import '../services/firebase_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_shadows.dart';
 import '../theme/app_text.dart';
 import '../widgets/common.dart';
-import '../widgets/delete_account_dialog.dart';
 
 /// نسخة Flutter من pages/ProfileView.tsx
 class ProfileView extends StatefulWidget {
@@ -40,12 +43,17 @@ class _ProfileViewState extends State<ProfileView> {
   bool _isSaving = false;
   bool _isUploading = false;
   bool _showLogoutConfirm = false;
+  bool _showDeleteConfirm = false;
+  bool _isDeleting = false;
+  String? _deleteError;
+  final TextEditingController _deletePassCtrl = TextEditingController();
   String? _photoOverride;
 
   @override
   void dispose() {
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
+    _deletePassCtrl.dispose();
     super.dispose();
   }
 
@@ -86,6 +94,69 @@ class _ProfileViewState extends State<ProfileView> {
       if (mounted) showAppAlert(context, 'فشل في حفظ الصورة');
     } finally {
       if (mounted) setState(() => _isUploading = false);
+    }
+  }
+
+  /// الزرار بيظهر للعميل والكابتن بس (مش للمشغّل ولا الأدمن).
+  bool get _canDeleteAccount =>
+      widget.user.role == UserRole.customer ||
+      widget.user.role == UserRole.driver;
+
+  void _openDeleteConfirm() {
+    _deletePassCtrl.clear();
+    setState(() {
+      _deleteError = null;
+      _showDeleteConfirm = true;
+    });
+  }
+
+  Future<void> _handleDeleteAccount() async {
+    if (_isDeleting) return;
+    final needsPassword = accountNeedsPassword();
+    if (needsPassword && _deletePassCtrl.text.isEmpty) {
+      setState(() => _deleteError = 'اكتب كلمة المرور لتأكيد الحذف');
+      return;
+    }
+    setState(() {
+      _isDeleting = true;
+      _deleteError = null;
+    });
+    try {
+      if (await hasActiveOrders(widget.user.id)) {
+        if (mounted) {
+          setState(() => _deleteError =
+              'عندك طلب شغال دلوقتي. استنى لما يخلص أو يتلغي، وبعدها احذف حسابك');
+        }
+        return;
+      }
+      await deleteMyAccount(widget.user.id,
+          password: needsPassword ? _deletePassCtrl.text : null);
+      // التطبيق بيرجع لشاشة الدخول تلقائياً (authStateChanges)
+    } on fb.FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        if (isGoogleSignInCancelled(e)) {
+          _deleteError = 'اتلغى تأكيد الحساب، محدش اتحذف';
+        } else if (e.code == 'wrong-password' ||
+            e.code == 'invalid-credential' ||
+            e.code == 'invalid-password') {
+          _deleteError = 'كلمة المرور غلط';
+        } else if (e.code == 'too-many-requests') {
+          _deleteError = 'محاولات كتير، جرّب بعد شوية';
+        } else if (e.code == 'network-request-failed') {
+          _deleteError = 'مفيش اتصال بالإنترنت، جرّب تاني';
+        } else {
+          _deleteError = 'تعذر حذف الحساب، حاول مرة أخرى';
+        }
+      });
+    } catch (e) {
+      debugPrint('delete account failed: $e');
+      if (!mounted) return;
+      setState(() => _deleteError = isGoogleSignInCancelled(e)
+          ? 'اتلغى تأكيد الحساب، محدش اتحذف'
+          : 'تعذر حذف الحساب، حاول مرة أخرى');
+    } finally {
+      if (mounted) setState(() => _isDeleting = false);
     }
   }
 
@@ -161,8 +232,10 @@ class _ProfileViewState extends State<ProfileView> {
                       _basicInfoCard(),
                       const SizedBox(height: 16),
                       _logoutButton(),
-                      const SizedBox(height: 12),
-                      _deleteAccountButton(),
+                      if (_canDeleteAccount) ...[
+                        const SizedBox(height: 12),
+                        _deleteAccountButton(),
+                      ],
                       const SizedBox(height: 24),
                       Column(
                         children: [
@@ -181,6 +254,7 @@ class _ProfileViewState extends State<ProfileView> {
           ),
         ),
         if (_showLogoutConfirm) _logoutModal(),
+        if (_showDeleteConfirm) _deleteModal(),
       ],
     );
   }
@@ -520,21 +594,152 @@ class _ProfileViewState extends State<ProfileView> {
   Widget _deleteAccountButton() {
     return PressScale(
       scale: 0.99,
-      onTap: () => showDeleteAccountDialog(context, widget.user),
+      onTap: _openDeleteConfirm,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         decoration: BoxDecoration(
           color: C.white,
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: C.rose200.withOpacity(0.7)),
+          border: Border.all(color: C.slate200),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const Icon(LucideIcons.trash2, size: 18, color: C.rose600),
             const SizedBox(width: 10),
-            Text('حذف حسابي نهائياً', style: T.s(14, T.w800, C.rose600)),
+            Text('حذف الحساب نهائياً',
+                style: T.s(13, T.w800, C.rose600)),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _deleteModal() {
+    final needsPassword = accountNeedsPassword();
+    final isDriver = widget.user.role == UserRole.driver;
+    return Positioned.fill(
+      child: GlassBox(
+        sigma: 12,
+        color: C.slate950.withOpacity(0.6),
+        borderRadius: BorderRadius.zero,
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 384),
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  padding: const EdgeInsets.all(28),
+                  decoration: BoxDecoration(
+                    color: C.white,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: C.slate100),
+                    boxShadow: Sh.xxl(),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 72,
+                          height: 72,
+                          decoration: BoxDecoration(
+                            color: C.rose50,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: const Icon(LucideIcons.trash2,
+                              size: 32, color: C.rose600),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text('حذف الحساب نهائياً؟',
+                          textAlign: TextAlign.center,
+                          style: T.s(22, T.w900, C.slate900)),
+                      const SizedBox(height: 8),
+                      Text(
+                          'هيتم حذف حسابك وبياناتك الشخصية (الاسم والهاتف والصورة والمحفظة) ومش هتقدر ترجعها.'
+                          '${isDriver ? ' مستندات التوثيق وسجل المراجعة ممكن تفضل محفوظة المدة اللي بيطلبها القانون.' : ''}'
+                          ' سجل الطلبات بيفضل عند الإدارة للمحاسبة.',
+                          textAlign: TextAlign.center,
+                          style: T.s(11, T.w500, C.slate500, height: 1.7)),
+                      const SizedBox(height: 16),
+                      if (needsPassword)
+                        TextField(
+                          controller: _deletePassCtrl,
+                          obscureText: true,
+                          enabled: !_isDeleting,
+                          textAlign: TextAlign.right,
+                          textDirection: TextDirection.rtl,
+                          style: T.s(13, T.w700, C.slate900),
+                          decoration: InputDecoration(
+                            hintText: 'اكتب كلمة المرور للتأكيد',
+                            hintStyle: T.s(12, T.w500, C.slate400),
+                            filled: true,
+                            fillColor: C.slate50,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 14),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
+                        )
+                      else
+                        Text('هنطلب منك تأكيد حساب جوجل قبل الحذف.',
+                            textAlign: TextAlign.center,
+                            style: T.s(11, T.w700, C.slate600)),
+                      if (_deleteError != null) ...[
+                        const SizedBox(height: 12),
+                        Text(_deleteError!,
+                            textAlign: TextAlign.center,
+                            style: T.s(11, T.w700, C.rose600, height: 1.6)),
+                      ],
+                      const SizedBox(height: 20),
+                      PressScale(
+                        onTap: _isDeleting ? () {} : _handleDeleteAccount,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: _isDeleting ? C.slate300 : C.rose600,
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: Sh.md(),
+                          ),
+                          child: _isDeleting
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2.5, color: C.white))
+                              : Text('نعم، احذف حسابي',
+                                  style: T.s(14, T.w700, C.white)),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      PressScale(
+                        onTap: _isDeleting
+                            ? () {}
+                            : () => setState(() => _showDeleteConfirm = false),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: C.slate100,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Text('إلغاء والتراجع',
+                              style: T.s(14, T.w700, C.slate700)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );

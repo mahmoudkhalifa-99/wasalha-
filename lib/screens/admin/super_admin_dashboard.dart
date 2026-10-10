@@ -6,12 +6,12 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../models/models.dart';
 import '../../services/firebase_service.dart';
+import 'app_status_card.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_shadows.dart';
 import '../../theme/app_text.dart';
 import '../../widgets/common.dart';
 import 'admin_ads_manager.dart';
-import 'app_status_card.dart';
 import 'broadcast_dialog.dart';
 import 'admin_geography_manager.dart';
 import 'admin_restaurant_manager.dart';
@@ -201,10 +201,10 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                     children: [
                       const SizedBox(height: 12),
                       _topBar(),
+                      const SizedBox(height: 24),
+                      AppStatusCard(userId: widget.user.id),
                       const SizedBox(height: 32),
                       _statsGrid(s),
-                      const SizedBox(height: 24),
-                      AppStatusCard(admin: widget.user),
                       const SizedBox(height: 32),
                       _controlUnitsGrid(),
                       const SizedBox(height: 32),

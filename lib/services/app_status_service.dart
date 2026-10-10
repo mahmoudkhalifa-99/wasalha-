@@ -1,48 +1,45 @@
-// مفتاح تشغيل/إيقاف التطبيق كله — بيتحكم فيه السوبر أدمن بس.
+// تفعيل / تعطيل التطبيق كله من السوبر أدمن.
 // الوثيقة: config/app = { enabled: bool, message: string, updatedAt, updatedBy }
-// لو الوثيقة مش موجودة = التطبيق شغال.
-import 'package:cloud_firestore/cloud_firestore.dart';
+// لو الوثيقة مش موجودة أو القراءة فشلت: التطبيق شغّال (ما نقفلش الناس بسبب عطل شبكة).
+import 'package:cloud_firestore/cloud_firestore.dart' hide Order, Blob;
 
 import 'firebase_service.dart';
+
+const String kDefaultDisabledMessage =
+    'التطبيق متوقف مؤقتاً. جرّب مرة تانية بعد شوية.';
 
 class AppStatus {
   final bool enabled;
   final String message;
   const AppStatus({this.enabled = true, this.message = ''});
 
-  static const on = AppStatus();
+  String get displayMessage =>
+      message.trim().isEmpty ? kDefaultDisabledMessage : message.trim();
 
-  static const defaultMessage =
-      'التطبيق متوقف مؤقتاً للصيانة والتحديث. هنرجع لك في أقرب وقت، شكراً لصبرك.';
+  factory AppStatus.fromDoc(DocumentSnapshot<Map<String, dynamic>> d) {
+    final m = d.data();
+    if (m == null) return const AppStatus();
+    return AppStatus(
+      enabled: m['enabled'] != false,
+      message: (m['message'] as String?) ?? '',
+    );
+  }
 }
 
-class AppStatusService {
-  static DocumentReference<Map<String, dynamic>> get _ref =>
-      db.collection('config').doc('app');
+DocumentReference<Map<String, dynamic>> get _ref =>
+    db.collection('config').doc('app');
 
-  /// بيتابع الحالة لحظياً. أي خطأ (مثلاً أوفلاين) = نعتبر التطبيق شغال
-  /// عشان انقطاع النت ما يوقفش المستخدمين.
-  static Stream<AppStatus> watch() {
-    return _ref.snapshots().map((snap) {
-      final d = snap.data();
-      if (d == null) return AppStatus.on;
-      return AppStatus(
-        enabled: d['enabled'] != false,
-        message: (d['message'] as String?)?.trim() ?? '',
-      );
-    }).handleError((_) {});
-  }
+Stream<AppStatus> appStatusStream() => _ref.snapshots().map(AppStatus.fromDoc);
 
-  static Future<void> set({
-    required bool enabled,
-    required String message,
-    required String adminId,
-  }) {
-    return _ref.set({
+/// السوبر أدمن بس (القواعد بتتحقق).
+Future<void> setAppEnabled({
+  required bool enabled,
+  required String message,
+  required String byUid,
+}) =>
+    _ref.set({
       'enabled': enabled,
       'message': message.trim(),
       'updatedAt': DateTime.now().millisecondsSinceEpoch,
-      'updatedBy': adminId,
+      'updatedBy': byUid,
     });
-  }
-}

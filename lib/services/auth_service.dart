@@ -53,29 +53,6 @@ Future<UserCredential> signInWithGoogle() async {
   return auth.signInWithCredential(credential);
 }
 
-/// إعادة تأكيد هوية مستخدم جوجل (مطلوبة قبل العمليات الحساسة زي حذف الحساب).
-Future<void> reauthenticateWithGoogle() async {
-  final user = auth.currentUser;
-  if (user == null) {
-    throw FirebaseAuthException(code: 'no-current-user');
-  }
-  try {
-    await _googleSignIn.signOut();
-  } catch (e) {
-    debugPrint('google signOut before reauth failed: $e');
-  }
-  final account = await _googleSignIn.signIn();
-  if (account == null) throw const GoogleSignInCancelledException();
-  final g = await account.authentication;
-  if (g.idToken == null && g.accessToken == null) {
-    throw FirebaseAuthException(code: 'missing-id-token');
-  }
-  await user.reauthenticateWithCredential(GoogleAuthProvider.credential(
-    idToken: g.idToken,
-    accessToken: g.accessToken,
-  ));
-}
-
 /// هل الخطأ ده معناه إن المستخدم لغى شاشة جوجل بنفسه؟
 bool isGoogleSignInCancelled(Object error) {
   if (error is GoogleSignInCancelledException) return true;
@@ -96,4 +73,53 @@ String googleSignInErrorCode(Object error) {
   if (error is FirebaseAuthException) return error.code;
   if (error is PlatformException) return error.code;
   return error.runtimeType.toString();
+}
+
+/// إعادة التحقق من الهوية بجوجل (قبل العمليات الحساسة زي حذف الحساب).
+Future<void> reauthenticateWithGoogle() async {
+  final user = auth.currentUser;
+  if (user == null) {
+    throw FirebaseAuthException(code: 'no-current-user');
+  }
+  try {
+    await _googleSignIn.signOut();
+  } catch (e) {
+    debugPrint('google signOut before reauth failed: $e');
+  }
+  final account = await _googleSignIn.signIn();
+  if (account == null) throw const GoogleSignInCancelledException();
+  final g = await account.authentication;
+  if (g.idToken == null && g.accessToken == null) {
+    throw FirebaseAuthException(
+      code: 'missing-id-token',
+      message: 'جوجل ما رجّعش أي توكن',
+    );
+  }
+  await user.reauthenticateWithCredential(GoogleAuthProvider.credential(
+    idToken: g.idToken,
+    accessToken: g.accessToken,
+  ));
+}
+
+/// تسجيل خروج حساب جوجل من الـ plugin (بدون أخطاء).
+Future<void> googleSignOutQuiet() async {
+  try {
+    await _googleSignIn.signOut();
+  } catch (e) {
+    debugPrint('google signOut failed: $e');
+  }
+}
+
+/// دخول جوجل بصمت (من غير قايمة حسابات) — لاستعادة الجلسة لو Firebase فقدها.
+/// بيرجّع false لو مفيش حساب جوجل متسجّل دخول على الجهاز.
+Future<bool> signInWithGoogleSilently() async {
+  final account = await _googleSignIn.signInSilently();
+  if (account == null) return false;
+  final g = await account.authentication;
+  if (g.idToken == null && g.accessToken == null) return false;
+  await auth.signInWithCredential(GoogleAuthProvider.credential(
+    idToken: g.idToken,
+    accessToken: g.accessToken,
+  ));
+  return true;
 }

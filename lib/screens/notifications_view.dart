@@ -19,7 +19,6 @@ class _NotificationItem {
   final String type; // INFO | SUCCESS | WARNING | ALERT
   final int createdAt;
   final bool read;
-  final bool personal; // موجّه للمستخدم نفسه (مش ALL ولا دور)
   const _NotificationItem({
     required this.id,
     required this.title,
@@ -27,7 +26,6 @@ class _NotificationItem {
     required this.type,
     required this.createdAt,
     required this.read,
-    this.personal = false,
   });
 }
 
@@ -51,8 +49,6 @@ class _NotificationsViewState extends State<NotificationsView> {
   bool _isActivating = false;
   AuthorizationStatus _permissionStatus = AuthorizationStatus.notDetermined;
   StreamSubscription? _sub;
-  // ids قيد التعليم كمقروءة حالياً (عشان ما نكتبش نفس الوثيقة مرتين)
-  final Set<String> _markingIds = {};
 
   @override
   void initState() {
@@ -73,7 +69,6 @@ class _NotificationsViewState extends State<NotificationsView> {
           type: m['type'] as String? ?? 'INFO',
           createdAt: (m['createdAt'] as num?)?.toInt() ?? 0,
           read: m['read'] == true,
-          personal: m['userId'] == widget.user.id,
         );
       }).toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -82,7 +77,6 @@ class _NotificationsViewState extends State<NotificationsView> {
         _notifications = docs;
         _loading = false;
       });
-      _autoMarkAsRead();
     });
   }
 
@@ -129,29 +123,6 @@ class _NotificationsViewState extends State<NotificationsView> {
       if (mounted) showAppAlert(context, 'فشل تفعيل الإشعارات، يرجى المحاولة لاحقاً.');
     } finally {
       if (mounted) setState(() => _isActivating = false);
-    }
-  }
-
-  /// فتح الشاشة = قراءة تلقائية لإشعارات المستخدم الشخصية.
-  /// إشعارات البث (ALL / الدور) وثيقة واحدة مشتركة بين الكل، فتعليمها مقروءة
-  /// هيخفيها عن باقي المستخدمين — فسايبينها لزر «قراءة الكل» زي ما كانت.
-  Future<void> _autoMarkAsRead() async {
-    final ids = _notifications
-        .where((n) => !n.read && n.personal && !_markingIds.contains(n.id))
-        .map((n) => n.id)
-        .toList();
-    if (ids.isEmpty) return;
-    _markingIds.addAll(ids);
-    try {
-      final batch = db.batch();
-      for (final id in ids) {
-        batch.update(db.collection('notifications').doc(id), {'read': true});
-      }
-      await batch.commit();
-    } catch (e) {
-      // لو فشلت الكتابة نسمح بإعادة المحاولة مع أول تحديث جاي
-      debugPrint('auto mark read failed: $e');
-      _markingIds.removeAll(ids);
     }
   }
 

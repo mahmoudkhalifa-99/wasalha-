@@ -10,6 +10,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'screens/app_shell.dart';
 import 'services/firebase_service.dart';
 import 'services/notification_service.dart';
+import 'services/onboarding_prefs.dart';
+import 'services/remembered_login.dart';
+import 'services/session_prefs.dart';
 import 'theme/app_colors.dart';
 
 Future<void> main() async {
@@ -45,11 +48,29 @@ Future<void> main() async {
 }
 
 Future<void> _initServices() async {
+  await OnboardingPrefs.load(); // الترحيب مرة واحدة بعد التثبيت
   try {
     await initFirebase().timeout(const Duration(seconds: 20));
   } on FirebaseException catch (e) {
     // التهيئة اتعملت قبل كده (native) — عادي نكمل
     if (e.code != 'duplicate-app') rethrow;
+  }
+  // "تذكرني": لو المستخدم لغاه، نطلّعه من الجلسة عند فتح التطبيق.
+  // (الافتراضي مفعّل، فالجلسة بتفضل محفوظة ومفيش دخول في كل مرة.)
+  await SessionPrefs.load();
+  if (!SessionPrefs.rememberMe) {
+    if (auth.currentUser != null) {
+      try {
+        await auth.signOut();
+      } catch (e) {
+        debugPrint('auto signOut (remember me off) failed: $e');
+      }
+    }
+    await RememberedLogin.clear();
+  } else if (auth.currentUser == null) {
+    // Firebase فقد الجلسة (بيحصل على بعض الأجهزة): نرجّعها بصمت
+    await RememberedLogin.tryRestore()
+        .timeout(const Duration(seconds: 8), onTimeout: () => false);
   }
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   try {

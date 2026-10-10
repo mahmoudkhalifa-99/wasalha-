@@ -140,8 +140,8 @@ class _AdminEditUserState extends State<AdminEditUser> {
         'email': _emailCtrl.text,
         'role': _role.value,
       };
-      // السوبر أدمن يقدر يعطّل ويرجّع تفعيل أي حساب
-      updates['status'] = _status.value;
+      // الحساب المعطّل مينفعش يتفعّل من التطبيق، بس المطوّر يرجّعه
+      if (!_originallySuspended) updates['status'] = _status.value;
       // تنظيف أي كلمة مرور قديمة مخزنة كنص في وثيقة المستخدم
       updates['password'] = FieldValue.delete();
       if (_role == UserRole.driver) {
@@ -620,35 +620,30 @@ class _AdminEditUserState extends State<AdminEditUser> {
           },
           onChanged: (v) => setState(() => _role = v),
         );
-        final Widget statusField = Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _dropdownField<UserStatus>(
-              label: 'حالة الحساب (Activation)',
-              value: _status,
-              items: {
-                UserStatus.approved: 'مفعل (نشط الآن)',
-                if (_canSuspend || _originallySuspended)
-                  UserStatus.suspended: 'معطّل',
-              },
-              onChanged: (v) => setState(() => _status = v),
-            ),
-            if (_status == UserStatus.suspended && !_originallySuspended)
-              Padding(
-                padding: const EdgeInsets.only(top: 6, left: 4, right: 4),
-                child: Text(
-                    'تنبيه: لو عطّلت الحساب، المستخدم مش هيقدر يدخل التطبيق لحد ما تفعّله تاني.',
-                    style: T.s(9, T.w800, C.rose500)),
-              ),
-            if (_originallySuspended && _status == UserStatus.approved)
-              Padding(
-                padding: const EdgeInsets.only(top: 6, left: 4, right: 4),
-                child: Text(
-                    'الحساب هيتفعّل بعد الضغط على "حفظ التعديلات الشاملة".',
-                    style: T.s(9, T.w800, C.emerald600)),
-              ),
-          ],
-        );
+        final Widget statusField = _originallySuspended
+            ? _lockedStatusField()
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _dropdownField<UserStatus>(
+                    label: 'حالة الحساب (Activation)',
+                    value: _status,
+                    items: {
+                      UserStatus.approved: 'مفعل (نشط الآن)',
+                      if (_canSuspend)
+                        UserStatus.suspended: 'معطّل (لا رجوع إلا للمطوّر)',
+                    },
+                    onChanged: (v) => setState(() => _status = v),
+                  ),
+                  if (_status == UserStatus.suspended)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6, left: 4, right: 4),
+                      child: Text(
+                          'تنبيه: لو عطّلت الحساب، المستخدم مش هيقدر يدخل التطبيق، ومحدش يقدر يرجّعه غير المطوّر.',
+                          style: T.s(9, T.w800, C.rose500)),
+                    ),
+                ],
+              );
         return twoCol
             ? Row(children: [
                 Expanded(child: roleField),
@@ -661,6 +656,32 @@ class _AdminEditUserState extends State<AdminEditUser> {
                 statusField
               ]);
       }),
+    );
+  }
+
+  Widget _lockedStatusField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Text('حالة الحساب (Activation)',
+              textAlign: TextAlign.right,
+              style: T.s(10, T.w900, C.slate400)),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: C.rose50,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: C.rose200),
+          ),
+          child: Text('معطّل — إعادة التفعيل من المطوّر فقط',
+              textAlign: TextAlign.right,
+              style: T.s(13, T.w900, C.rose500)),
+        ),
+      ],
     );
   }
 
