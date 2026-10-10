@@ -118,13 +118,16 @@ service cloud.firestore {
     }
 
     // قيود تعديل المدير على الحسابات
-    // التعطيل لحسابات غير الأدمن وماينفعش المدير يعطّل نفسه. إعادة التفعيل مسموحة للسوبر أدمن.
     function adminUpdateOk(uid) {
       let before = resource.data.get('status', 'APPROVED');
       let after = request.resource.data.get('status', 'APPROVED');
-      return after != 'SUSPENDED'
-          || before == 'SUSPENDED'
-          || (resource.data.role != 'ADMIN' && uid != request.auth.uid);
+      return
+        // الحساب المعطّل مينفعش يتفعّل من التطبيق: الرجوع للمطوّر (من الكونسول)
+        (before != 'SUSPENDED' || after == 'SUSPENDED')
+        // التعطيل لحسابات غير الأدمن، وماينفعش المدير يعطّل نفسه
+        && (after != 'SUSPENDED'
+            || before == 'SUSPENDED'
+            || (resource.data.role != 'ADMIN' && uid != request.auth.uid));
     }
 
     match /users/{uid} {
@@ -133,11 +136,12 @@ service cloud.firestore {
       allow update: if signedIn() && emailOk() && (
           (request.auth.uid == uid && selfUpdateOk())
           || (isAdmin() && adminUpdateOk(uid)));
-      // حذف الحساب: غير المؤكد (شاشة "البريد غلط؟")، أو المستخدم لحسابه من جوه التطبيق
-      // (عميل/كابتن فقط — السوبر أدمن والمشغّل لأ)، أو حذف المدير
+      // حذف الحساب: غير المؤكد (شاشة "البريد غلط؟")، أو العميل/الكابتن لحسابه
+      // من الملف الشخصي (المشغّل والأدمن لأ)، أو حذف المدير
       allow delete: if signedIn() && (
-          (request.auth.uid == uid && request.auth.token.email_verified != true)
-          || (request.auth.uid == uid && resource.data.role in ['CUSTOMER', 'DRIVER'])
+          (request.auth.uid == uid
+            && (request.auth.token.email_verified != true
+                || myRole() in ['CUSTOMER', 'DRIVER']))
           || isAdmin());
     }
 
@@ -329,16 +333,15 @@ service cloud.firestore {
           && request.resource.data.enforced is bool;
     }
 
-    // مفتاح تشغيل/إيقاف التطبيق: { enabled: bool, message: string }
-    // القراءة مفتوحة للكل (شاشة الدخول لازم تعرف الحالة قبل تسجيل الدخول).
-    // الكتابة: السوبر أدمن فقط.
+    // تفعيل/تعطيل التطبيق كله: { enabled: bool, message: string }
+    // القراءة مفتوحة (مفيش بيانات حساسة) عشان التطبيق يعرف الحالة قبل الدخول.
     match /config/app {
       allow read: if true;
       allow write: if isAdmin()
           && request.resource.data.keys().hasOnly(['enabled', 'message', 'updatedAt', 'updatedBy'])
           && request.resource.data.enabled is bool
           && request.resource.data.message is string
-          && request.resource.data.message.size() <= 200;
+          && request.resource.data.message.size() <= 300;
     }
 
     // ───────────── تقييمات الكباتن ─────────────

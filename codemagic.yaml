@@ -1,4 +1,4 @@
-# إعداد Codemagic لتطبيق وصلها (Flutter) - Android فقط
+# إعداد Codemagic لتطبيق وصلها (Flutter) - Android + iOS (TestFlight)
 #
 # قبل ما تستخدم الملف ده، لازم:
 # 1) تشغّل `flutter create --org com.wasalah .` محليًا وترفع android/ على Git
@@ -202,6 +202,87 @@ workflows:
       - build/app/outputs/flutter-apk/*.apk
       - build/app/outputs/bundle/release/*.aab
     publishing:
+      email:
+        recipients:
+          - mahmoudkhalifa.kh91@gmail.com
+        notify:
+          success: true
+          failure: true
+
+  # ───────────────────────── iOS → TestFlight ─────────────────────────
+  # المتطلبات (مرة واحدة) موجودة في README (قسم "نشر نسخة iOS").
+  ios-workflow:
+    name: وصلها - iOS (TestFlight)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    integrations:
+      app_store_connect: Wasalha   # اسم الـ App Store Connect API key في Codemagic > Teams > Integrations
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      groups:
+        - Wasalha                  # لازم فيه GOOGLE_SERVICE_INFO_PLIST (base64)
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.wasalah.app
+      vars:
+        BUNDLE_ID: "com.wasalah.app"
+    scripts:
+      - name: توليد مجلد ios لو غير موجود
+        script: |
+          if [ ! -d "ios/Runner.xcodeproj" ]; then
+            flutter create --platforms=ios --org com.wasalah --project-name wasalha .
+          else
+            echo "مجلد ios موجود بالفعل"
+          fi
+
+      - name: حذف widget_test الافتراضي الناتج عن flutter create
+        script: |
+          if [ -f test/widget_test.dart ] && grep -q "const MyApp()" test/widget_test.dart; then
+            rm -f test/widget_test.dart
+          fi
+
+      - name: تجهيز GoogleService-Info.plist
+        script: |
+          if [ -z "${GOOGLE_SERVICE_INFO_PLIST:-}" ]; then
+            echo "GOOGLE_SERVICE_INFO_PLIST مش موجود في group Wasalha (base64 للملف)"; exit 1
+          fi
+          echo "$GOOGLE_SERVICE_INFO_PLIST" | base64 --decode > ios/Runner/GoogleService-Info.plist
+
+      - name: تطبيق إعدادات وصلها على مشروع iOS (صلاحيات + Google + Push)
+        script: |
+          python3 tools/patch_ios.py
+          ruby tools/patch_ios_project.rb
+
+      - name: تثبيت الباكدجات
+        script: flutter pub get
+
+      - name: تشغيل الاختبارات (flutter test)
+        script: flutter test
+
+      - name: توليد أيقونة iOS
+        script: dart run flutter_launcher_icons -f flutter_launcher_icons-ios.yaml
+
+      - name: تثبيت الـ Pods
+        script: cd ios && pod install
+
+      - name: تطبيق ملفات التوقيع على مشروع Xcode
+        script: xcode-project use-profiles
+
+      - name: بناء IPA
+        script: |
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist \
+            --build-number=$PROJECT_BUILD_NUMBER \
+            --dart-define=PUSH_RELAY_URL=${PUSH_RELAY_URL:-}
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
       email:
         recipients:
           - mahmoudkhalifa.kh91@gmail.com
