@@ -17,6 +17,7 @@ import '../services/app_status_service.dart';
 import '../services/firebase_service.dart';
 import '../services/remembered_login.dart';
 import '../services/notification_service.dart';
+import '../services/onboarding_prefs.dart';
 import '../services/permission_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_shadows.dart';
@@ -33,6 +34,7 @@ import 'admin/super_admin_dashboard.dart';
 import 'courier_dashboard.dart';
 import 'customer_dashboard.dart';
 import 'login_screen.dart';
+import 'onboarding_screen.dart';
 import 'notifications_view.dart';
 import 'support_view.dart';
 import 'complete_phone_screen.dart';
@@ -58,6 +60,8 @@ class _AppShellState extends State<AppShell> {
   bool _accountError = false;
   // مستخدم جوجل جديد لازم يختار (عميل / كابتن) قبل إنشاء وثيقته
   ({String uid, String email, String displayName})? _pendingProfile;
+  // الترحيب أول مرة بعد التثبيت بس (قبل أي شاشة تانية، سواء فيه جلسة محفوظة أو لأ)
+  bool _showOnboarding = !OnboardingPrefs.seen;
   bool _showNotifications = false;
   bool _showSupport = false;
   int _unreadCount = 0;
@@ -85,7 +89,7 @@ class _AppShellState extends State<AppShell> {
       if (mounted) setState(() => _appStatus = st);
     }, onError: (e) => debugPrint('app status stream: $e'));
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) PermissionService.requestOnFirstLaunch(context);
+      if (mounted) PermissionService.requestOnFirstLaunch();
     });
   }
 
@@ -348,6 +352,12 @@ class _AppShellState extends State<AppShell> {
 
   @override
   Widget build(BuildContext context) {
+    if (_showOnboarding) {
+      return OnboardingScreen(onComplete: () {
+        OnboardingPrefs.markSeen();
+        setState(() => _showOnboarding = false);
+      });
+    }
     if (_loading) return _loadingScreen(context);
     if (_connectionError) return _connectionErrorScreen();
     if (_accountError) return _accountErrorScreen();

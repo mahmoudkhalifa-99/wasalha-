@@ -15,10 +15,8 @@ import '../theme/app_shadows.dart';
 import '../theme/app_text.dart';
 import '../widgets/common.dart';
 import '../widgets/form_fields.dart';
-import '../services/onboarding_prefs.dart';
 import '../services/remembered_login.dart';
 import '../services/session_prefs.dart';
-import 'onboarding_screen.dart';
 import 'verify_email_screen.dart' show needsEmailVerification;
 
 const String _googleSvg = '''
@@ -45,8 +43,6 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  // الترحيب بيظهر أول مرة بعد التثبيت بس
-  bool _showOnboarding = !OnboardingPrefs.seen;
   bool _isRegistering = false;
   bool _isCompletingProfile = false;
   UserRole _role = UserRole.customer; // CUSTOMER | DRIVER
@@ -93,7 +89,6 @@ class _LoginScreenState extends State<LoginScreen> {
   void _resumeProfile() {
     final r = widget.completeProfileFor;
     if (r == null) return;
-    _showOnboarding = false;
     _googleUserData = r;
     if (_name.text.isEmpty) _name.text = r.displayName;
     if (_email.text.isEmpty) _email.text = r.email;
@@ -444,14 +439,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_showOnboarding) {
-      return OnboardingScreen(
-          onComplete: () {
-            OnboardingPrefs.markSeen();
-            setState(() => _showOnboarding = false);
-          });
-    }
-
     final md = isMd(context);
     return Scaffold(
       backgroundColor: C.slate50,
