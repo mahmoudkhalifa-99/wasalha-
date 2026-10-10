@@ -191,6 +191,9 @@ workflows:
 
       - name: توليد أيقونة التطبيق (launcher icon)
         script: |
+          # أي ملف flutter_launcher_icons-<اسم>.yaml قديم في الجذر بتعتبره المكتبة
+          # flavor (زي iOS) وبيفشل البناء لأن مفيش مجلد ios. بنمسحه قبل التوليد.
+          rm -f flutter_launcher_icons-*.yaml
           dart run flutter_launcher_icons
 
       - name: بناء APK
