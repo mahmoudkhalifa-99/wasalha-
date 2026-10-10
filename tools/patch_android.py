@@ -35,6 +35,11 @@ block = ''.join(f'    <uses-permission android:name="{p}" />\n'
 if block:
     m = m.replace('<application', block + '    <application', 1)
 m = re.sub(r'android:label="[^"]*"', 'android:label="وصلها"', m, count=1)
+# منع Android Auto Backup من استرجاع SharedPreferences بعد إعادة التثبيت
+# (كان بيرجّع علامة "الترحيب اتشاف" فالترحيب والأذونات ميظهروش تاني)
+for attr in ('allowBackup', 'fullBackupContent', 'dataExtractionRules'):
+    m = re.sub(r'\s+android:' + attr + r'="[^"]*"', '', m)
+m = m.replace('<application', '<application android:allowBackup="false" android:fullBackupContent="false"', 1)
 if 'default_notification_icon' not in m:
     meta = ('        <meta-data android:name="com.google.firebase.messaging.default_notification_icon"\n'
             '            android:resource="@mipmap/ic_launcher" />\n'
