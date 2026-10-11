@@ -1,12 +1,13 @@
 // قواعد تسعير المشوار — مصدر واحد للحساب في كل التطبيق.
 //
 //   Final Fare          = MAX(Calculated Fare, 25)
-//   Platform Commission = 5            (ثابتة، بتتخصم من قيمة الرحلة)
-//   Driver Earnings     = Final Fare - 5
+//   Platform Commission = 1 جنيه عن كل 5 جنيه من أجرة المشوار (بتتخصم من قيمة الرحلة)
+//                         مثال: 25 ← 5، 50 ← 10، 100 ← 20
+//   Driver Earnings     = Final Fare - Platform Commission
 //
-// الحد الأدنى 25 ج.م لكل أنواع المركبات، والعمولة 5 ج.م ثابتة (مش نسبة).
+// الحد الأدنى 25 ج.م لكل أنواع المركبات. العمولة بتتحسب بالخمسات الكاملة بس
+// (مثال: 27 ← 5 لأن فيها 5 خمسات كاملة).
 // العميل بيشوف السعر النهائي بس، والكابتن بيشوف قيمة الرحلة ← العمولة ← الصافي.
-import 'config_constants.dart' show platformFeePerTrip;
 import 'models/models.dart' show Order;
 
 /// الحد الأدنى لسعر أي مشوار (جنيه) — لكل أنواع المركبات.
@@ -16,11 +17,23 @@ const double minTripFare = 25;
 double finalFare(double calculated) =>
     calculated < minTripFare ? minTripFare : calculated;
 
-/// عمولة التطبيق الثابتة على المشوار المكتمل (بتتخصم من قيمة الرحلة).
-double get platformCommission => platformFeePerTrip;
+/// كل كام جنيه من الأجرة بيتحسب عليها جنيه عمولة.
+const double commissionStepFare = 5;
+
+/// العمولة اللي بتتحسب على كل خطوة كاملة من الأجرة (جنيه).
+const double commissionPerStep = 1;
+
+/// عمولة التطبيق على مشوار قيمته [fare]: جنيه عن كل 5 جنيه كاملة.
+/// (25 ← 5، 50 ← 10، 27 ← 5، 4 ← 0). الأجرة الصفر أو السالبة = صفر.
+double commissionFor(double fare) {
+  if (fare.isNaN || fare <= 0) return 0;
+  // +1e-9 عشان أخطاء الفاصلة العائمة (مثال 15.000000000000002 / 5)
+  final steps = ((fare / commissionStepFare) + 1e-9).floor();
+  return steps * commissionPerStep;
+}
 
 /// صافي مستحق الكابتن = السعر النهائي − العمولة.
-double driverEarnings(double fare) => fare - platformCommission;
+double driverEarnings(double fare) => fare - commissionFor(fare);
 
 /// قيمة المشوار نفسه من الطلب: في طلبات المطاعم الـ price بيشمل تمن الأصناف
 /// (اللي الكابتن بيدفعه للمطعم)، فنشيله ونسيب رسوم التوصيل/المشوار بس.

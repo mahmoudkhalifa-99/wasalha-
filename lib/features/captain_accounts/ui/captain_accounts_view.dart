@@ -190,8 +190,7 @@ class _CaptainAccountsViewState extends State<CaptainAccountsView> {
     for (final c in cards) {
       trips += c.stats.deliveredCount;
       fares += c.stats.totalFares;
-      due += feeDue(
-          c.stats.deliveredCount, c.driver?.feePerTrip ?? kDefaultFeePerTrip);
+      due += c.stats.feeDue(fixedFee: c.driver?.feePerTrip);
     }
 
     final df = intl.DateFormat('yyyy/MM/dd');
@@ -216,7 +215,7 @@ class _CaptainAccountsViewState extends State<CaptainAccountsView> {
                 ],
               ),
               const SizedBox(height: 6),
-              Text('مكسبك = عدد المشاوير المكتملة × رسوم المشوار (الافتراضي ${formatMoney(kDefaultFeePerTrip)} ج.م لكل مشوار، وممكن تعدّلها لكل كابتن).',
+              Text('مكسبك = جنيه عن كل 5 جنيه من أجرة كل مشوار مكتمل (مثال: مشوار 25 ج.م = 5 ج.م). وممكن تحدد رسوم ثابتة لكل مشوار لكابتن معيّن.',
                   style: T.s(10, T.w700, C.slate400)),
             ],
           ),
@@ -292,7 +291,8 @@ class _CaptainCardState extends State<_CaptainCard> {
   void initState() {
     super.initState();
     _saved = _driver?.feePerTrip;
-    _rate = TextEditingController(text: formatMoney(_saved ?? kDefaultFeePerTrip));
+    // فاضي = تلقائي (جنيه لكل 5 جنيه)
+    _rate = TextEditingController(text: _saved == null ? '' : formatMoney(_saved!));
   }
 
   @override
@@ -301,21 +301,24 @@ class _CaptainCardState extends State<_CaptainCard> {
     super.dispose();
   }
 
-  double? get _typed => parseFee(_rate.text);
+  bool get _auto => _rate.text.trim().isEmpty;
+
+  /// الرسوم الثابتة المكتوبة، أو null لو الخانة فاضية (تلقائي) أو الإدخال غلط.
+  double? get _typed => _auto ? null : parseFee(_rate.text);
+
+  bool get _invalid => !_auto && parseFee(_rate.text) == null;
 
   bool get _canSave {
-    final t = _typed;
-    if (t == null || _driver == null) return false;
-    return t != (_saved ?? kDefaultFeePerTrip);
+    if (_invalid || _driver == null) return false;
+    return _typed != _saved;
   }
 
   Future<void> _save() async {
-    final t = _typed;
-    if (t == null) return;
+    if (_invalid) return;
     setState(() => _saving = true);
     try {
-      // لو الرسوم = الافتراضية نشيل الحقل بدل ما نثبّتها.
-      final value = t == kDefaultFeePerTrip ? null : t;
+      // خانة فاضية = نشيل الرسوم الثابتة ونرجع للحساب التلقائي.
+      final value = _typed;
       await widget.repo.saveFee(widget.model.id, value);
       if (mounted) {
         setState(() => _saved = value);
@@ -332,22 +335,21 @@ class _CaptainCardState extends State<_CaptainCard> {
     }
   }
 
-  String _summaryText(double fee) {
+  String _summaryText(double? fee) {
     final df = intl.DateFormat('yyyy/MM/dd');
     final last = widget.range.end.subtract(const Duration(days: 1));
     return 'حساب الكابتن: ${_driver?.name ?? widget.model.id}\n'
         'الفترة: ${df.format(widget.range.start)} - ${df.format(last)}\n'
         'المشاوير المكتملة: ${_stats.deliveredCount}\n'
         'إجمالي الأجرة: ${formatMoney(_stats.totalFares)} ج.م\n'
-        'رسوم المشوار: ${formatMoney(fee)} ج.م\n'
-        'المستحق: ${formatMoney(feeDue(_stats.deliveredCount, fee))} ج.م';
+        'رسوم المشوار: ${fee == null ? 'جنيه عن كل 5 جنيه' : '${formatMoney(fee)} ج.م'}\n'
+        'المستحق: ${formatMoney(_stats.feeDue(fixedFee: fee))} ج.م';
   }
 
   @override
   Widget build(BuildContext context) {
-    final typed = _typed;
-    final fee = typed ?? (_saved ?? kDefaultFeePerTrip);
-    final due = feeDue(_stats.deliveredCount, fee);
+    final fee = _invalid ? _saved : _typed; // null = تلقائي
+    final due = _stats.feeDue(fixedFee: fee);
     final name = _driver?.name.isNotEmpty == true ? _driver!.name : 'كابتن غير معروف';
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -409,9 +411,10 @@ class _CaptainCardState extends State<_CaptainCard> {
                     textDirection: TextDirection.ltr,
                     onChanged: (_) => setState(() {}),
                     decoration: InputDecoration(
-                      labelText: 'رسوم المشوار (ج.م)',
+                      labelText: 'رسوم ثابتة (ج.م)',
+                      hintText: 'تلقائي',
                       isDense: true,
-                      errorText: typed == null ? 'من 0 إلى 1000' : null,
+                      errorText: _invalid ? 'من 0 إلى 1000' : null,
                     ),
                   ),
                 ),
@@ -420,7 +423,7 @@ class _CaptainCardState extends State<_CaptainCard> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('مكسبك من الكابتن (${_stats.deliveredCount} × ${formatMoney(fee)})', style: T.s(10, T.w700, C.slate500)),
+                      Text(fee == null ? 'مكسبك من الكابتن (جنيه لكل 5 جنيه)' : 'مكسبك من الكابتن (${_stats.deliveredCount} × ${formatMoney(fee)})', style: T.s(10, T.w700, C.slate500)),
                       Text('${formatMoney(due)} ج.م', style: T.s(16, T.w900, C.emerald700)),
                     ],
                   ),
