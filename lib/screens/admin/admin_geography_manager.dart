@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart' hide Order, Blob;
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -26,6 +27,10 @@ class _AdminGeographyManagerState extends State<AdminGeographyManager> {
   bool _loading = true;
   String? _selectedDistId;
   final _newVillCtrl = TextEditingController();
+  final _newLatCtrl = TextEditingController();
+  final _newLngCtrl = TextEditingController();
+  final _newDistCtrl = TextEditingController();
+  bool _isAddingDist = false;
   bool _isSubmitting = false;
 
   String? _editingVillageId;
@@ -63,6 +68,9 @@ class _AdminGeographyManagerState extends State<AdminGeographyManager> {
   void dispose() {
     _sub?.cancel();
     _newVillCtrl.dispose();
+    _newLatCtrl.dispose();
+    _newLngCtrl.dispose();
+    _newDistCtrl.dispose();
     _editLatCtrl.dispose();
     _editLngCtrl.dispose();
     super.dispose();
@@ -70,23 +78,78 @@ class _AdminGeographyManagerState extends State<AdminGeographyManager> {
 
   Future<void> _handleAddVillage() async {
     if (_selectedDistId == null || _newVillCtrl.text.trim().isEmpty) return;
+    final dist = _districts.firstWhere((d) => d.id == _selectedDistId);
+    final name = _newVillCtrl.text.trim();
+    if (dist.villages.any((v) => v.name.trim() == name)) {
+      showAppAlert(context, 'القرية دي موجودة بالفعل في مركز ${dist.name}');
+      return;
+    }
+    // الإحداثيات اختيارية: لو فاضية نستخدم مركز أول قرية في المركز
+    LatLngPoint center = dist.villages.isNotEmpty
+        ? dist.villages.first.center
+        : const LatLngPoint(30.556, 31.008);
+    final latTxt = _newLatCtrl.text.trim();
+    final lngTxt = _newLngCtrl.text.trim();
+    if (latTxt.isNotEmpty || lngTxt.isNotEmpty) {
+      final lat = double.tryParse(latTxt);
+      final lng = double.tryParse(lngTxt);
+      if (lat == null ||
+          lng == null ||
+          lat < -90 ||
+          lat > 90 ||
+          lng < -180 ||
+          lng > 180) {
+        showAppAlert(context, 'يرجى إدخال إحداثيات صحيحة (Latitude و Longitude)');
+        return;
+      }
+      center = LatLngPoint(lat, lng);
+    }
     setState(() => _isSubmitting = true);
     try {
       final newVill = Village(
         id: 'v_${DateTime.now().millisecondsSinceEpoch}',
-        name: _newVillCtrl.text.trim(),
-        center: const LatLngPoint(30.556, 31.008),
+        name: name,
+        center: center,
       );
-      final dist = _districts.firstWhere((d) => d.id == _selectedDistId);
-      final updatedVillages = [...dist.villages, newVill];
-      await db.collection('geo_config').doc(_selectedDistId).update(
-          {'villages': updatedVillages.map((v) => v.toMap()).toList()});
+      await db.collection('geo_config').doc(_selectedDistId).update({
+        'villages': FieldValue.arrayUnion([newVill.toMap()])
+      });
       _newVillCtrl.clear();
-      if (mounted) showAppAlert(context, 'تم إضافة القرية بنجاح لمخطط المنوفية');
+      _newLatCtrl.clear();
+      _newLngCtrl.clear();
+      if (mounted) {
+        showAppAlert(context, 'تم إضافة القرية، وظهرت عند كل العملاء والكباتن');
+      }
     } catch (e) {
       if (mounted) showAppAlert(context, 'خطأ في الإضافة');
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  Future<void> _handleAddDistrict() async {
+    final name = _newDistCtrl.text.trim();
+    if (name.isEmpty) return;
+    if (_districts.any((d) => d.name.trim() == name)) {
+      showAppAlert(context, 'المركز ده موجود بالفعل');
+      return;
+    }
+    setState(() => _isAddingDist = true);
+    try {
+      final id = 'd_${DateTime.now().millisecondsSinceEpoch}';
+      await db
+          .collection('geo_config')
+          .doc(id)
+          .set(District(id: id, name: name, villages: const []).toMap());
+      _newDistCtrl.clear();
+      if (mounted) {
+        setState(() => _selectedDistId = id);
+        showAppAlert(context, 'تم إضافة المركز، ضيف له القرى من الأعلى');
+      }
+    } catch (e) {
+      if (mounted) showAppAlert(context, 'خطأ في إضافة المركز');
+    } finally {
+      if (mounted) setState(() => _isAddingDist = false);
     }
   }
 
@@ -173,6 +236,8 @@ class _AdminGeographyManagerState extends State<AdminGeographyManager> {
               children: [
                 _header(context),
                 const SizedBox(height: 32),
+                _addDistrictForm(),
+                const SizedBox(height: 20),
                 _addVillageForm(),
                 const SizedBox(height: 32),
                 if (_loading)
@@ -241,6 +306,93 @@ class _AdminGeographyManagerState extends State<AdminGeographyManager> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _newCoordField(String hint, TextEditingController c) {
+    return Container(
+      decoration: BoxDecoration(
+        color: C.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: C.white.withOpacity(0.1)),
+      ),
+      child: TextField(
+        controller: c,
+        textAlign: TextAlign.center,
+        keyboardType:
+            const TextInputType.numberWithOptions(decimal: true, signed: true),
+        style: T.s(12, T.w900, C.white),
+        decoration: InputDecoration(
+          border: InputBorder.none,
+          hintText: hint,
+          hintStyle: T.s(10, T.w700, C.slate500),
+          contentPadding: const EdgeInsets.all(16),
+        ),
+      ),
+    );
+  }
+
+  Widget _addDistrictForm() {
+    final canSubmit = !_isAddingDist && _newDistCtrl.text.trim().isNotEmpty;
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: C.white,
+        borderRadius: BorderRadius.circular(32),
+        border: Border.all(color: C.slate100),
+        boxShadow: Sh.sm(),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('إضافة مركز جديد',
+              textAlign: TextAlign.right, style: T.s(15, T.w900, C.slate900)),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              PressScale(
+                onTap: canSubmit ? _handleAddDistrict : null,
+                child: Opacity(
+                  opacity: canSubmit ? 1 : 0.3,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
+                    decoration: BoxDecoration(
+                      color: C.rose500,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: _isAddingDist
+                        ? const Spinner(size: 16)
+                        : Text('إضافة', style: T.s(12, T.w900, C.white)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: C.slate50,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: TextField(
+                    controller: _newDistCtrl,
+                    textAlign: TextAlign.right,
+                    textDirection: TextDirection.rtl,
+                    style: T.s(13, T.w900, C.slate900),
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      border: InputBorder.none,
+                      hintText: 'اسم المركز (مثال: بركة السبع)',
+                      hintStyle: T.s(12, T.w700, C.slate400),
+                      contentPadding: const EdgeInsets.all(16),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -325,6 +477,14 @@ class _AdminGeographyManagerState extends State<AdminGeographyManager> {
                 contentPadding: const EdgeInsets.all(20),
               ),
             ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(child: _newCoordField('Latitude (اختياري)', _newLatCtrl)),
+              const SizedBox(width: 12),
+              Expanded(child: _newCoordField('Longitude (اختياري)', _newLngCtrl)),
+            ],
           ),
           const SizedBox(height: 16),
           PressScale(

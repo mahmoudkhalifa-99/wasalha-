@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../services/geo_service.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -145,13 +146,16 @@ class _ActivityViewState extends State<ActivityView> {
                   const SizedBox(height: 20),
                   SizedBox(
                     height: 44,
-                    child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      children: [
-                        _filterChip('الكل', 'جميع المراكز'),
-                        for (final d in menofiaData)
-                          _filterChip(d.name, 'مركز ${d.name}'),
-                      ],
+                    child: ValueListenableBuilder<int>(
+                      valueListenable: GeoService.revision,
+                      builder: (_, __, ___) => ListView(
+                        scrollDirection: Axis.horizontal,
+                        children: [
+                          _filterChip('الكل', 'جميع المراكز'),
+                          for (final d in menofiaData)
+                            _filterChip(d.name, 'مركز ${d.name}'),
+                        ],
+                      ),
                     ),
                   ),
                   const SizedBox(height: 20),

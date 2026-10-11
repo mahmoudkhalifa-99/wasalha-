@@ -112,7 +112,7 @@ final List<District> menofiaData = [
   ]),
 ];
 
-final List<Village> ashmounVillagesFull =
+List<Village> get ashmounVillagesFull =>
     menofiaData.expand((d) => d.villages).toList();
 
 class ConfigPricing {

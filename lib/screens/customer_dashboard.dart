@@ -2554,8 +2554,10 @@ class _LocationSelectorState extends State<LocationSelector> {
   }
 
   Future<void> _pickVillage() async {
-    final d = widget.selectedDistrict;
-    if (d == null) return;
+    final sel = widget.selectedDistrict;
+    if (sel == null) return;
+    // نجيب نسخة المركز المحدّثة (ممكن الأدمن يكون ضاف قرى بعد اختياره)
+    final d = menofiaData.firstWhere((e) => e.id == sel.id, orElse: () => sel);
     final picked = await _showPicker(d.villages.map((v) => v.name).toList());
     if (picked != null) {
       final v = d.villages.firstWhere((e) => e.name == picked);

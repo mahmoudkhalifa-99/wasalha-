@@ -15,6 +15,7 @@ import '../services/back_interceptor.dart';
 import '../services/account_deletion_service.dart';
 import '../services/app_status_service.dart';
 import '../services/firebase_service.dart';
+import '../services/geo_service.dart';
 import '../services/remembered_login.dart';
 import '../services/notification_service.dart';
 import '../services/onboarding_prefs.dart';
@@ -109,6 +110,7 @@ class _AppShellState extends State<AppShell> {
     _authSub = auth.authStateChanges().listen((fbUser) async {
       try {
         if (fbUser != null) {
+          GeoService.start();
           _fetchUserData(fbUser.uid);
         } else {
           _userSub?.cancel();
@@ -118,6 +120,7 @@ class _AppShellState extends State<AppShell> {
           _provisionAttemptedUid = null;
           _pendingProfile = null;
           NotificationService.stop();
+          GeoService.stop();
           if (!mounted) return;
           setState(() {
             _user = null;
