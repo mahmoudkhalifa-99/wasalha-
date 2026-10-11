@@ -9,8 +9,9 @@ void main() {
     [15, 25, 5, 20],
     [20, 25, 5, 20],
     [25, 25, 5, 20],
-    [50, 50, 5, 45],
-    [100, 100, 5, 95],
+    [27, 27, 5, 22],
+    [50, 50, 10, 40],
+    [100, 100, 20, 80],
   ];
 
   group('قواعد التسعير', () {
@@ -19,13 +20,18 @@ void main() {
           () {
         final fare = finalFare(c[0]);
         expect(fare, c[1]);
-        expect(platformCommission, c[2]);
+        expect(commissionFor(fare), c[2]);
         expect(driverEarnings(fare), c[3]);
       });
     }
 
-    test('العمولة ثابتة 5 مش نسبة، والحد الأدنى 25', () {
-      expect(platformFeePerTrip, 5);
+    test('العمولة جنيه عن كل 5 جنيه كاملة، والحد الأدنى 25', () {
+      expect(commissionFor(25), 5);
+      expect(commissionFor(24.99), 4);
+      expect(commissionFor(4), 0);
+      expect(commissionFor(0), 0);
+      expect(commissionFor(-10), 0);
+      expect(commissionFor(15.000000000000002), 3);
       expect(minTripFare, 25);
       expect(configDefaultPricing.minPrice, minTripFare);
     });
