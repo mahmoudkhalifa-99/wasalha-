@@ -140,17 +140,14 @@ void main() {
       expect(feeDue(10, -1), 0);
     });
 
-    test('الافتراضي: جنيه لكل 5 جنيه من أجرة كل مشوار', () {
+    test('الرسوم مش بتعتمد على سعر المشوار', () {
       final range = DateRange(DateTime(2026, 10, 1), DateTime(2026, 11, 1));
       final stats = buildCaptainStats([
         trip('1', 'a', OrderStatus.delivered, 20, ms(2026, 10, 5)),
         trip('2', 'a', OrderStatus.delivered, 500, ms(2026, 10, 6)),
       ], range);
       expect(stats.single.deliveredCount, 2);
-      // 20 ← 4، 500 ← 100
-      expect(stats.single.feeDue(), 104);
-      // رسوم ثابتة لكابتن معيّن بتتجاهل الأجرة
-      expect(stats.single.feeDue(fixedFee: 5), 10);
+      expect(feeDue(stats.single.deliveredCount, kDefaultFeePerTrip), 10);
     });
   });
 
@@ -190,5 +187,8 @@ void main() {
       expect(formatMoney(41.63), '41.63');
     });
 
+    test('رسوم المشوار الافتراضية = 5 جنيه', () {
+      expect(kDefaultFeePerTrip, 5);
+    });
   });
 }

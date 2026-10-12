@@ -9,9 +9,8 @@ void main() {
     [15, 25, 5, 20],
     [20, 25, 5, 20],
     [25, 25, 5, 20],
-    [27, 27, 5, 22],
-    [50, 50, 10, 40],
-    [100, 100, 20, 80],
+    [50, 50, 5, 45],
+    [100, 100, 5, 95],
   ];
 
   group('قواعد التسعير', () {
@@ -20,18 +19,13 @@ void main() {
           () {
         final fare = finalFare(c[0]);
         expect(fare, c[1]);
-        expect(commissionFor(fare), c[2]);
+        expect(platformCommission, c[2]);
         expect(driverEarnings(fare), c[3]);
       });
     }
 
-    test('العمولة جنيه عن كل 5 جنيه كاملة، والحد الأدنى 25', () {
-      expect(commissionFor(25), 5);
-      expect(commissionFor(24.99), 4);
-      expect(commissionFor(4), 0);
-      expect(commissionFor(0), 0);
-      expect(commissionFor(-10), 0);
-      expect(commissionFor(15.000000000000002), 3);
+    test('العمولة ثابتة 5 مش نسبة، والحد الأدنى 25', () {
+      expect(platformFeePerTrip, 5);
       expect(minTripFare, 25);
       expect(configDefaultPricing.minPrice, minTripFare);
     });
@@ -41,6 +35,28 @@ void main() {
         // أقل سعر محسوب مهما كان المضاعف بيترفع لـ 25
         expect(finalFare(1 * m), 25);
       }
+    });
+  });
+
+  group('calculateTripFare', () {
+    test('صفر كم = الحد الأدنى 25', () {
+      expect(calculateTripFare(0, VehicleType.motorcycle), 25);
+      expect(calculateTripFare(0, VehicleType.toktok), 25);
+    });
+
+    test('توكتوك: (5 + كم × 4)', () {
+      expect(calculateTripFare(10, VehicleType.toktok), 45);
+    });
+
+    test('موتوسيكل 0.85 / عربية 2.2 (مقرّب لأقرب جنيه)', () {
+      expect(calculateTripFare(10, VehicleType.motorcycle), 38); // 38.25
+      expect(calculateTripFare(10, VehicleType.car), 99);
+    });
+
+    test('الحد الأقصى 900، ومسافة سالبة/NaN = الحد الأدنى', () {
+      expect(calculateTripFare(500, VehicleType.car), 900);
+      expect(calculateTripFare(-3, VehicleType.toktok), 25);
+      expect(calculateTripFare(double.nan, VehicleType.toktok), 25);
     });
   });
 
