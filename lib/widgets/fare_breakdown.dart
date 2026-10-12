@@ -40,7 +40,7 @@ class FareBreakdownView extends StatelessWidget {
         children: [
           _row('قيمة الرحلة', '${_money(fare)} ج.م'),
           const SizedBox(height: 6),
-          _row('عمولة التطبيق', '- ${_money(commissionFor(fare))} ج.م',
+          _row('عمولة التطبيق', '- ${_money(platformCommission)} ج.م',
               color: C.rose500),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 8),

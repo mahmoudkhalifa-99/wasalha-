@@ -1,16 +1,16 @@
 import 'package:intl/intl.dart' as intl;
 
+import '../../../config_constants.dart' show platformFeePerTrip;
 import '../../../models/models.dart' show OrderStatus;
-import '../../../pricing.dart' show commissionFor;
 
-/// حسابات الكباتن: عدد المشاوير والمستحق للمنصة (جنيه عن كل 5 جنيه من أجرة المشوار، أو رسوم ثابتة لكابتن معيّن). كل المنطق هنا نقي (من غير
+/// حسابات الكباتن: عدد المشاوير والمستحق للمنصة (رسوم ثابتة على كل مشوار). كل المنطق هنا نقي (من غير
 /// Firestore) عشان يتختبر.
 ///
 /// أساس العد: الطلب اللي حالته DELIVERED ومعيّن عليه كابتن، ووقته (`updatedAt`
 /// وقت التسليم) جوه الفترة. السعر = سعر العرض اللي العميل وافق عليه (`price`).
 
-/// الافتراضي: عمولة المنصة جنيه عن كل 5 جنيه من أجرة كل مشوار (مش رقم ثابت).
-/// ولو الأدمن حدّد رسوم ثابتة لكابتن معيّن، بتتطبّق على كل مشاويره بدل الافتراضي.
+/// رسوم المشوار الافتراضية (من الثابت العام للمنصة) بالجنيه: 5 جنيه.
+double get kDefaultFeePerTrip => platformFeePerTrip;
 
 enum PeriodPreset { thisMonth, lastMonth, last30Days, custom }
 
@@ -114,14 +114,6 @@ class CaptainStats {
   double get totalFares => delivered.fold(0.0, (a, t) => a + t.price);
 
   double get averageFare => deliveredCount == 0 ? 0 : totalFares / deliveredCount;
-
-  /// المستحق للمنصة: لو [fixedFee] موجودة = عدد المشاوير × الرسوم الثابتة،
-  /// وإلا مجموع العمولة المحسوبة على أجرة كل مشوار (جنيه لكل 5 جنيه).
-  double feeDue({double? fixedFee}) {
-    if (fixedFee != null) return _feeDueFixed(deliveredCount, fixedFee);
-    final sum = delivered.fold<double>(0, (a, t) => a + commissionFor(t.price));
-    return (sum * 100).round() / 100;
-  }
 }
 
 /// بيجمّع الطلبات حسب الكابتن للفترة. الطلبات بدون كابتن أو برّه الفترة بتتجاهل.
@@ -157,10 +149,8 @@ List<CaptainStats> buildCaptainStats(Iterable<TripRow> rows, DateRange range) {
   return out;
 }
 
-/// المستحق للمنصة برسوم ثابتة = عدد المشاوير المكتملة × رسوم المشوار، مقرّب لأقرب قرش.
-double feeDue(int trips, double feePerTrip) => _feeDueFixed(trips, feePerTrip);
-
-double _feeDueFixed(int trips, double feePerTrip) {
+/// المستحق للمنصة = عدد المشاوير المكتملة × رسوم المشوار، مقرّب لأقرب قرش.
+double feeDue(int trips, double feePerTrip) {
   if (trips <= 0 || feePerTrip <= 0) return 0;
   return (trips * feePerTrip * 100).round() / 100;
 }

@@ -359,31 +359,53 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     });
   }
 
+  int _distReq = 0; // رقم آخر طلب مسافة: الردود القديمة بتتجاهل
+
   Future<void> _recalcDistance() async {
-    if (!_hasPickup || !_hasDropoff) return;
+    final req = ++_distReq;
+    if (!_hasPickup || !_hasDropoff) {
+      // مفيش مسار كامل: ما نسيبش مسافة قديمة تتحسب في السعر
+      setState(() {
+        _actualRoadDist = 0;
+        _isCalculatingDist = false;
+      });
+      return;
+    }
     final p = _pickupVillage, d = _dropoffVillage;
     if (p != null &&
         d != null &&
         p.id == d.id &&
         _pickupPoint == null &&
         _dropoffPoint == null) {
-      setState(() => _actualRoadDist = 0);
+      setState(() {
+        _actualRoadDist = 0;
+        _isCalculatingDist = false;
+      });
       return;
     }
     setState(() => _isCalculatingDist = true);
     try {
-      final res = await utils.getRoadDistance(
-          _pickupPoint?.latitude ?? p!.center.lat,
-          _pickupPoint?.longitude ?? p!.center.lng,
-          _dropoffPoint?.latitude ?? d!.center.lat,
-          _dropoffPoint?.longitude ?? d!.center.lng);
-      if (!mounted) return;
+      final pLat = _pickupPoint?.latitude ?? p?.center.lat;
+      final pLng = _pickupPoint?.longitude ?? p?.center.lng;
+      final dLat = _dropoffPoint?.latitude ?? d?.center.lat;
+      final dLng = _dropoffPoint?.longitude ?? d?.center.lng;
+      if (pLat == null || pLng == null || dLat == null || dLng == null) {
+        if (mounted && req == _distReq) {
+          setState(() {
+            _actualRoadDist = 0;
+            _isCalculatingDist = false;
+          });
+        }
+        return;
+      }
+      final res = await utils.getRoadDistance(pLat, pLng, dLat, dLng);
+      if (!mounted || req != _distReq) return; // اتغيّرت الاختيارات أثناء الحساب
       setState(() {
         _actualRoadDist = res.distance;
         _isCalculatingDist = false;
       });
     } catch (_) {
-      if (mounted) setState(() => _isCalculatingDist = false);
+      if (mounted && req == _distReq) setState(() => _isCalculatingDist = false);
     }
   }
 
@@ -430,12 +452,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     if (p != null && d != null && p.id == d.id) {
       return finalFare(configDefaultPricing.sameVillagePrice);
     }
-    final baseFare =
-        configDefaultPricing.basePrice + (_actualRoadDist * configDefaultPricing.pricePerKm);
-    final multiplier = configDefaultPricing.multipliers[_selectedVehicle] ?? 1.0;
-    final v = baseFare * multiplier;
-    // الحد الأدنى 25 ج.م لكل المركبات (finalFare)
-    return finalFare(v).roundToDouble();
+    return calculateTripFare(_actualRoadDist, _selectedVehicle);
   }
 
   Future<void> _handleAcceptOffer(Offer offer) async {
@@ -2849,24 +2866,33 @@ class _RestaurantMenuViewState extends State<RestaurantMenuView> {
     super.dispose();
   }
 
+  int _calcReq = 0;
+
   Future<void> _recalc() async {
+    final req = ++_calcReq;
     final pt = _point;
     final v = _currentVillage;
     final lat = pt?.latitude ?? v?.center.lat;
     final lng = pt?.longitude ?? v?.center.lng;
-    if (lat == null || lng == null) return;
+    if (lat == null || lng == null) {
+      setState(() {
+        _roadDist = 0;
+        _isCalculating = false;
+      });
+      return;
+    }
     setState(() => _isCalculating = true);
     try {
       final res = await utils.getRoadDistance(
           widget.restaurant.lat, widget.restaurant.lng, lat, lng);
-      if (mounted) {
+      if (mounted && req == _calcReq) {
         setState(() {
           _roadDist = res.distance;
           _isCalculating = false;
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _isCalculating = false);
+      if (mounted && req == _calcReq) setState(() => _isCalculating = false);
     }
   }
 

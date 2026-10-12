@@ -135,7 +135,36 @@ class RoadDistance {
 // بيتخزّن بس الرد الحقيقي من OSRM، مش التقدير الاحتياطي.
 final Map<String, RoadDistance> _roadDistCache = {};
 
-/// حساب المسافة الفعلية والزمن التقديري للطرق
+Future<RoadDistance?> _osrmDistance(
+    String base, double lat1, double lon1, double lat2, double lon2) async {
+  try {
+    final url = Uri.parse('$base/$lon1,$lat1;$lon2,$lat2?overview=false');
+    final response = await http.get(url, headers: const {
+      'Accept': 'application/json',
+      'User-Agent': 'Wasalha/1.0 (com.wasalah.app)',
+    }).timeout(const Duration(seconds: 6));
+    if (response.statusCode != 200) return null;
+    final data = jsonDecode(response.body);
+    if (data is Map &&
+        data['code'] == 'Ok' &&
+        data['routes'] is List &&
+        (data['routes'] as List).isNotEmpty) {
+      final r = data['routes'][0];
+      final meters = (r['distance'] as num).toDouble();
+      if (meters.isNaN || meters < 0) return null;
+      return RoadDistance(
+        double.parse((meters / 1000).toStringAsFixed(1)),
+        ((r['duration'] as num).toDouble() / 60).ceil(),
+      );
+    }
+  } catch (_) {}
+  return null;
+}
+
+/// حساب المسافة الفعلية والزمن التقديري للطرق.
+/// بنسأل سيرفرات OSRM كلها مع بعض وناخد أول رد سليم (السيرفر الواحد بطيء/بيرفض
+/// أحيانًا، والمهلة القديمة 2.5 ث كانت بتخلّي السعر يتحسب على تقدير تقريبي).
+/// لو كلهم فشلوا: خط مستقيم × 1.3.
 Future<RoadDistance> getRoadDistance(
     double lat1, double lon1, double lat2, double lon2) async {
   if (lat1 == 0 || lon1 == 0 || lat2 == 0 || lon2 == 0) {
@@ -145,31 +174,43 @@ Future<RoadDistance> getRoadDistance(
       '${lat2.toStringAsFixed(4)},${lon2.toStringAsFixed(4)}';
   final cached = _roadDistCache[key];
   if (cached != null) return cached;
-  try {
-    final url = Uri.parse(
-        'https://router.project-osrm.org/route/v1/driving/$lon1,$lat1;$lon2,$lat2?overview=false');
-    final response =
-        await http.get(url).timeout(const Duration(milliseconds: 2500));
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      if (data is Map && data['code'] == 'Ok' && (data['routes'] as List).isNotEmpty) {
-        final r = data['routes'][0];
-        final res = RoadDistance(
-          double.parse(((r['distance'] as num) / 1000).toStringAsFixed(1)),
-          ((r['duration'] as num) / 60).ceil(),
-        );
-        if (_roadDistCache.length > 200) _roadDistCache.clear();
-        return _roadDistCache[key] = res;
+
+  final completer = Completer<RoadDistance?>();
+  var pending = _osrmBases.length;
+  for (final b in _osrmBases) {
+    _osrmDistance(b, lat1, lon1, lat2, lon2).then((r) {
+      if (completer.isCompleted) return;
+      if (r != null) {
+        completer.complete(r);
+      } else if (--pending == 0) {
+        completer.complete(null);
       }
-    }
-  } catch (_) {
-    // Fallback quietly to calculated straight distance
+    });
   }
-  final straight = calculateDistance(lat1, lon1, lat2, lon2);
+  final res = await completer.future;
+  if (res != null) {
+    if (_roadDistCache.length > 200) _roadDistCache.clear();
+    return _roadDistCache[key] = res;
+  }
+
+  // احتياطي: المسافة المستقيمة (من غير تقريب وسيط) × 1.3.
+  final straightKm = _haversineKm(lat1, lon1, lat2, lon2);
   return RoadDistance(
-    double.parse((straight * 1.3).toStringAsFixed(1)),
-    (straight * 3).ceil(),
+    double.parse((straightKm * 1.3).toStringAsFixed(1)),
+    (straightKm * 3).ceil(),
   );
+}
+
+double _haversineKm(double lat1, double lon1, double lat2, double lon2) {
+  const r = 6371.0;
+  final dLat = (lat2 - lat1) * (math.pi / 180);
+  final dLon = (lon2 - lon1) * (math.pi / 180);
+  final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+      math.cos(lat1 * (math.pi / 180)) *
+          math.cos(lat2 * (math.pi / 180)) *
+          math.sin(dLon / 2) *
+          math.sin(dLon / 2);
+  return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
 }
 
 double calculateDistance(

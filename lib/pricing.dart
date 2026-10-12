@@ -1,14 +1,14 @@
 // قواعد تسعير المشوار — مصدر واحد للحساب في كل التطبيق.
 //
 //   Final Fare          = MAX(Calculated Fare, 25)
-//   Platform Commission = 1 جنيه عن كل 5 جنيه من أجرة المشوار (بتتخصم من قيمة الرحلة)
-//                         مثال: 25 ← 5، 50 ← 10، 100 ← 20
-//   Driver Earnings     = Final Fare - Platform Commission
+//   Platform Commission = 5            (ثابتة، بتتخصم من قيمة الرحلة)
+//   Driver Earnings     = Final Fare - 5
 //
-// الحد الأدنى 25 ج.م لكل أنواع المركبات. العمولة بتتحسب بالخمسات الكاملة بس
-// (مثال: 27 ← 5 لأن فيها 5 خمسات كاملة).
+// الحد الأدنى 25 ج.م لكل أنواع المركبات، والعمولة 5 ج.م ثابتة (مش نسبة).
 // العميل بيشوف السعر النهائي بس، والكابتن بيشوف قيمة الرحلة ← العمولة ← الصافي.
-import 'models/models.dart' show Order;
+import 'config_constants.dart'
+    show platformFeePerTrip, ConfigPricing, configDefaultPricing;
+import 'models/models.dart' show Order, VehicleType;
 
 /// الحد الأدنى لسعر أي مشوار (جنيه) — لكل أنواع المركبات.
 const double minTripFare = 25;
@@ -17,23 +17,23 @@ const double minTripFare = 25;
 double finalFare(double calculated) =>
     calculated < minTripFare ? minTripFare : calculated;
 
-/// كل كام جنيه من الأجرة بيتحسب عليها جنيه عمولة.
-const double commissionStepFare = 5;
-
-/// العمولة اللي بتتحسب على كل خطوة كاملة من الأجرة (جنيه).
-const double commissionPerStep = 1;
-
-/// عمولة التطبيق على مشوار قيمته [fare]: جنيه عن كل 5 جنيه كاملة.
-/// (25 ← 5، 50 ← 10، 27 ← 5، 4 ← 0). الأجرة الصفر أو السالبة = صفر.
-double commissionFor(double fare) {
-  if (fare.isNaN || fare <= 0) return 0;
-  // +1e-9 عشان أخطاء الفاصلة العائمة (مثال 15.000000000000002 / 5)
-  final steps = ((fare / commissionStepFare) + 1e-9).floor();
-  return steps * commissionPerStep;
+/// سعر مشوار حسب المسافة الفعلية على الطريق ونوع المركبة:
+/// (السعر الأساسي + كم × سعر الكيلو) × مضاعف المركبة، بعدين الحد الأدنى 25
+/// والحد الأقصى (maxPrice)، مقرّب لأقرب جنيه.
+double calculateTripFare(double roadKm, VehicleType vehicle,
+    {ConfigPricing cfg = configDefaultPricing}) {
+  final km = (roadKm.isNaN || roadKm < 0) ? 0.0 : roadKm;
+  final multiplier = cfg.multipliers[vehicle] ?? 1.0;
+  final fare = finalFare((cfg.basePrice + km * cfg.pricePerKm) * multiplier)
+      .roundToDouble();
+  return fare > cfg.maxPrice ? cfg.maxPrice : fare;
 }
 
+/// عمولة التطبيق الثابتة على المشوار المكتمل (بتتخصم من قيمة الرحلة).
+double get platformCommission => platformFeePerTrip;
+
 /// صافي مستحق الكابتن = السعر النهائي − العمولة.
-double driverEarnings(double fare) => fare - commissionFor(fare);
+double driverEarnings(double fare) => fare - platformCommission;
 
 /// قيمة المشوار نفسه من الطلب: في طلبات المطاعم الـ price بيشمل تمن الأصناف
 /// (اللي الكابتن بيدفعه للمطعم)، فنشيله ونسيب رسوم التوصيل/المشوار بس.
