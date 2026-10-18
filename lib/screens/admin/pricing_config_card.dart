@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../config_constants.dart';
+import '../../services/firebase_service.dart' show friendlyError;
 import '../../services/pricing_config_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text.dart';

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../models/models.dart' show stripFirestore;
 import '../services/firebase_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text.dart';
