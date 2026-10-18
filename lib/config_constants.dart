@@ -6,8 +6,11 @@
 // عمداً لمطابقة التناقض الموجود في الكود الأصلي بالحرف الواحد.
 import 'models/models.dart';
 
-/// رسوم المنصة الثابتة على كل مشوار مكتمل (بالجنيه). مش نسبة مئوية.
-const double platformFeePerTrip = 5;
+/// عمولة المنصة = 16% من إجمالي الأوردر (نسبة مئوية، مش مبلغ ثابت).
+const double platformCommissionRate = 0.16;
+
+/// نفس النسبة كرقم صحيح للعرض (16).
+const double platformCommissionPercent = platformCommissionRate * 100;
 
 /// البيانات الجغرافية الشاملة لمحافظة المنوفية (10 مراكز)
 final List<District> menofiaData = [
@@ -136,6 +139,46 @@ class ConfigPricing {
   });
 }
 
+/// التسعير الفعّال: الافتراضي تحت، ولو الأدمن ظبّط config/pricing بيتطبّق من غير نشر نسخة.
+ConfigPricing activePricing = configDefaultPricing;
+double activeCommissionRate = platformCommissionRate;
+
+/// يطبّق مستند config/pricing. أي قيمة ناقصة أو برّه الحدود الآمنة بتفضل على الافتراضي
+/// (الحدود دي نفس حدود قواعد Firestore: أجرة 25–900، عمولة 0–40%).
+void applyPricingConfig(Map<String, dynamic>? m) {
+  if (m == null) {
+    activePricing = configDefaultPricing;
+    activeCommissionRate = platformCommissionRate;
+    return;
+  }
+  double pick(String k, double def, double lo, double hi) {
+    final v = m[k];
+    return v is num && v >= lo && v <= hi ? v.toDouble() : def;
+  }
+
+  final d = configDefaultPricing;
+  final mult = (m['multipliers'] as Map?) ?? const {};
+  double mul(VehicleType t) {
+    final v = mult[t.value];
+    return v is num && v >= 0.3 && v <= 5 ? v.toDouble() : d.multipliers[t]!;
+  }
+
+  activePricing = ConfigPricing(
+    basePrice: pick('basePrice', d.basePrice, 0, 200),
+    pricePerKm: pick('pricePerKm', d.pricePerKm, 0, 100),
+    minPrice: d.minPrice,
+    maxPrice: pick('maxPrice', d.maxPrice, 25, 900),
+    sameVillagePrice: pick('sameVillagePrice', d.sameVillagePrice, 25, 900),
+    deliveryBasePrice: pick('deliveryBasePrice', d.deliveryBasePrice, 0, 200),
+    foodOutsidePricePerKm:
+        pick('foodOutsidePricePerKm', d.foodOutsidePricePerKm, 0, 100),
+    multipliers: {for (final t in VehicleType.values) t: mul(t)},
+  );
+  final pct = m['commissionPercent'];
+  activeCommissionRate =
+      pct is num && pct >= 0 && pct <= 40 ? pct / 100 : platformCommissionRate;
+}
+
 const configDefaultPricing = ConfigPricing(
   basePrice: 5,
   pricePerKm: 4,
@@ -143,6 +186,7 @@ const configDefaultPricing = ConfigPricing(
   maxPrice: 900,
   sameVillagePrice: 25,
   deliveryBasePrice: 30,
+  // سعر كيلو التوصيل لطلبات المطاعم والصيدلية (بيتضاف على basePrice، والحد الأدنى 25).
   foodOutsidePricePerKm: 3,
   multipliers: {
     VehicleType.motorcycle: 0.85,

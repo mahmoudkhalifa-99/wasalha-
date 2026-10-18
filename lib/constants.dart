@@ -1,8 +1,8 @@
 // نسخة Dart من constants.ts — نفس القيم بالظبط.
 import 'models/models.dart';
 
-/// رسوم المنصة الثابتة على كل مشوار مكتمل (بالجنيه). مش نسبة مئوية.
-const double platformFeePerTrip = 5;
+/// عمولة المنصة = 16% من إجمالي الأوردر (نسبة مئوية، مش مبلغ ثابت).
+const double platformCommissionRate = 0.16;
 
 /// القائمة الشاملة والنهائية لقرى وعزب مركز أشمون (المنوفية)
 /// تم تجميعها بناءً على الوحدات المحلية لضمان التغطية الجغرافية الكاملة
@@ -151,3 +151,12 @@ bool isValidPhone(String? phone) {
   if (p == placeholderPhone) return false;
   return RegExp(r'^(010|011|012|015)[0-9]{8}$').hasMatch(p);
 }
+
+/// روابط سياسة الخصوصية والشروط (مطلوبة لنشر التطبيق على Google Play). بعد ما
+/// تستضيف النصوص (lib/legal_texts.dart) على رابط عام حطّه هنا؛ لحد وقتها التطبيق
+/// بيعرض النص المحلي.
+const String privacyPolicyUrl = '';
+const String termsUrl = '';
+
+/// رقم الطوارئ (شرطة النجدة في مصر). زر الطوارئ في شاشة تتبع الطلب بيتصل بيه.
+const String emergencyNumber = '122';
