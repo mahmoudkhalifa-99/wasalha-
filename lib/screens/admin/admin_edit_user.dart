@@ -40,6 +40,8 @@ class _AdminEditUserState extends State<AdminEditUser> {
       widget.userId != auth.currentUser?.uid;
   final _balanceCtrl = TextEditingController(text: '0');
   UserRole _role = UserRole.customer;
+  String? _restaurantId;
+  List<({String id, String name})> _restaurants = [];
   UserStatus _status = UserStatus.approved;
   VehicleType _vehicleType = VehicleType.toktok;
 
@@ -52,10 +54,24 @@ class _AdminEditUserState extends State<AdminEditUser> {
   final _walletKey = GlobalKey();
   final _statusKey = GlobalKey();
 
+  Future<void> _loadRestaurants() async {
+    try {
+      final snap = await db.collection('restaurants').orderBy('name').get();
+      if (!mounted) return;
+      setState(() => _restaurants = [
+            for (final d in snap.docs)
+              (id: d.id, name: (d.data()['name'] as String?) ?? d.id)
+          ]);
+    } catch (e) {
+      debugPrint('load restaurants failed: $e');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _fetchUser();
+    _loadRestaurants();
     _scrollController.addListener(() {
       final pos = _scrollController.position;
       final down = pos.pixels + pos.viewportDimension < pos.maxScrollExtent - 150;
@@ -85,6 +101,7 @@ class _AdminEditUserState extends State<AdminEditUser> {
           _phoneCtrl.text = u.phone;
           _emailCtrl.text = u.email;
           _role = u.role;
+          _restaurantId = u.restaurantId;
           _status = u.status;
           _vehicleType = u.vehicleType ?? VehicleType.toktok;
           _balanceCtrl.text = u.wallet.balance.toStringAsFixed(2);
@@ -140,21 +157,65 @@ class _AdminEditUserState extends State<AdminEditUser> {
         'email': _emailCtrl.text,
         'role': _role.value,
       };
-      // الحساب المعطّل مينفعش يتفعّل من التطبيق، بس المطوّر يرجّعه
-      if (!_originallySuspended) updates['status'] = _status.value;
+      // التعطيل والتفعيل من الأدمن، وكل تغيير حالة بيتسجّل في سجل المراجعة.
+      updates['status'] = _status.value;
       // تنظيف أي كلمة مرور قديمة مخزنة كنص في وثيقة المستخدم
       updates['password'] = FieldValue.delete();
       if (_role == UserRole.driver) {
         updates['vehicleType'] = _vehicleType.value;
       }
+      if (_role == UserRole.restaurant) {
+        if (_restaurantId == null) {
+          showAppAlert(context, 'اختار المطعم اللي الحساب ده بيستقبل أوردراته');
+          setState(() => _isSaving = false);
+          return;
+        }
+        updates['restaurantId'] = _restaurantId;
+      } else if (_targetUser?.restaurantId != null) {
+        updates['restaurantId'] = FieldValue.delete();
+      }
       final balance = double.tryParse(_balanceCtrl.text) ?? 0;
-      updates['wallet'] = {
-        'balance': balance,
-        'totalEarnings': _targetUser?.wallet.totalEarnings ?? 0,
-        'withdrawn': _targetUser?.wallet.withdrawn ?? 0,
-      };
+      final oldBalance = _targetUser?.wallet.balance ?? 0;
+      // بنغيّر الرصيد بس (dotted path): مبنمسحش totalEarnings/commissionDue اللي بيكتبها السيرفر.
+      updates['wallet.balance'] = balance;
 
-      await db.collection('users').doc(widget.userId).update(updates);
+      final batch = db.batch();
+      batch.update(db.collection('users').doc(widget.userId), updates);
+      if (_targetUser != null && _targetUser!.status != _status) {
+        batch.set(db.collection('admin_audit').doc(), {
+          'action': _status == UserStatus.suspended
+              ? 'USER_SUSPENDED'
+              : 'USER_REACTIVATED',
+          'targetUserId': widget.userId,
+          'before': _targetUser!.status.value,
+          'after': _status.value,
+          'performedBy': auth.currentUser?.uid ?? '',
+          'createdAt': DateTime.now().millisecondsSinceEpoch,
+        });
+      }
+      if ((balance - oldBalance).abs() > 0.004) {
+        // أي تعديل يدوي على الرصيد بيتسجّل (معاملة + سجل مراجعة) عشان يبقى فيه أثر.
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final adminId = auth.currentUser?.uid ?? '';
+        batch.set(db.collection('transactions').doc(), {
+          'userId': widget.userId,
+          'type': balance > oldBalance ? 'CREDIT' : 'DEBIT',
+          'kind': 'ADMIN_ADJUSTMENT',
+          'amount': (balance - oldBalance).abs(),
+          'description': 'تعديل رصيد يدوي من الإدارة',
+          'createdAt': now,
+          'createdBy': adminId,
+        });
+        batch.set(db.collection('admin_audit').doc(), {
+          'action': 'WALLET_ADJUSTMENT',
+          'targetUserId': widget.userId,
+          'before': oldBalance,
+          'after': balance,
+          'performedBy': adminId,
+          'createdAt': now,
+        });
+      }
+      await batch.commit();
       if (mounted) {
         await showAppAlert(context, 'تم حفظ كافة التعديلات الشاملة بنجاح');
         if (mounted) AppRouter.of(context).go('/admin/users');
@@ -616,13 +677,12 @@ class _AdminEditUserState extends State<AdminEditUser> {
             UserRole.customer: 'عميل (Customer)',
             UserRole.driver: 'كابتن (Driver)',
             UserRole.operator: 'مشغل (Operator)',
+            UserRole.restaurant: 'مطعم (Restaurant)',
             UserRole.admin: 'مدير (Admin)',
           },
           onChanged: (v) => setState(() => _role = v),
         );
-        final Widget statusField = _originallySuspended
-            ? _lockedStatusField()
-            : Column(
+        final Widget statusField = Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _dropdownField<UserStatus>(
@@ -630,8 +690,8 @@ class _AdminEditUserState extends State<AdminEditUser> {
                     value: _status,
                     items: {
                       UserStatus.approved: 'مفعل (نشط الآن)',
-                      if (_canSuspend)
-                        UserStatus.suspended: 'معطّل (لا رجوع إلا للمطوّر)',
+                      if (_canSuspend || _originallySuspended)
+                        UserStatus.suspended: 'معطّل',
                     },
                     onChanged: (v) => setState(() => _status = v),
                   ),
@@ -639,7 +699,7 @@ class _AdminEditUserState extends State<AdminEditUser> {
                     Padding(
                       padding: const EdgeInsets.only(top: 6, left: 4, right: 4),
                       child: Text(
-                          'تنبيه: لو عطّلت الحساب، المستخدم مش هيقدر يدخل التطبيق، ومحدش يقدر يرجّعه غير المطوّر.',
+                          'تنبيه: لو عطّلت الحساب، المستخدم مش هيقدر يدخل التطبيق لحد ما تفعّله تاني.',
                           style: T.s(9, T.w800, C.rose500)),
                     ),
                 ],
@@ -652,36 +712,25 @@ class _AdminEditUserState extends State<AdminEditUser> {
               ])
             : Column(children: [
                 roleField,
+                if (_role == UserRole.restaurant) ...[
+                  const SizedBox(height: 16),
+                  _dropdownField<String>(
+                    label: 'المطعم',
+                    value: _restaurants.any((r) => r.id == _restaurantId)
+                        ? _restaurantId!
+                        : '',
+                    items: {
+                      '': 'اختار المطعم',
+                      for (final r in _restaurants) r.id: r.name,
+                    },
+                    onChanged: (v) =>
+                        setState(() => _restaurantId = v.isEmpty ? null : v),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 statusField
               ]);
       }),
-    );
-  }
-
-  Widget _lockedStatusField() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Text('حالة الحساب (Activation)',
-              textAlign: TextAlign.right,
-              style: T.s(10, T.w900, C.slate400)),
-        ),
-        const SizedBox(height: 6),
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: C.rose50,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: C.rose200),
-          ),
-          child: Text('معطّل — إعادة التفعيل من المطوّر فقط',
-              textAlign: TextAlign.right,
-              style: T.s(13, T.w900, C.rose500)),
-        ),
-      ],
     );
   }
 

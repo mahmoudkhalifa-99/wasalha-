@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart' as ll;
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../constants.dart' show emergencyNumber;
 
 import '../config_constants.dart';
 import '../pricing.dart';
@@ -14,6 +15,7 @@ import '../core/map/geo_utils.dart' as geo;
 import '../features/tracking/models/tracking_models.dart' show GeoFix;
 import '../features/tracking/services/captain_locations.dart';
 import '../features/tracking/services/driver_location_source.dart' show driverLocationsCollection;
+import '../features/tracking/widgets/animated_driver_marker.dart' show AnimatedDriverMarkerLayer;
 import '../models/models.dart';
 import '../services/back_interceptor.dart';
 import '../services/firebase_service.dart';
@@ -30,6 +32,8 @@ import '../widgets/captains_offers_map.dart';
 import '../widgets/common.dart';
 import '../widgets/leaflet_map.dart';
 import '../widgets/map_location_picker.dart';
+import '../widgets/saved_addresses_bar.dart';
+import '../features/tracking/models/selected_location.dart';
 import 'activity_view.dart';
 import 'profile_view.dart';
 import 'wallet_view.dart';
@@ -72,6 +76,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
 
   // Pharmacy
   final _pharmacyNoteCtrl = TextEditingController();
+  final _pharmacyCostCtrl = TextEditingController(); // تمن الأدوية التقديري (اختياري)
   String? _prescriptionImage; // data:image/...;base64,...
 
   VehicleType _selectedVehicle = VehicleType.motorcycle;
@@ -93,6 +98,8 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
 
   // Tracking
   ll.LatLng? _driverLoc;
+  GeoFix? _driverFix; // آخر موقع للكابتن (بوقته واتجاهه) للماركر المتحرك
+  Timer? _ageTicker; // بيحدّث "آخر تحديث منذ..." حتى لو الكابتن واقف
   List<ll.LatLng> _routeGeometry = [];
   // مسار الكابتن: طلب واحد في نفس الوقت + تباعد تصاعدي بعد الفشل/429.
   final utils.RouteBackoff _routeBackoff = utils.RouteBackoff();
@@ -127,6 +134,9 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   void initState() {
     super.initState();
     BackInterceptor.register(_onBack);
+    _ageTicker = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (mounted && _driverLoc != null) setState(() {});
+    });
 
     _subRestaurants = db
         .collection('restaurants')
@@ -215,10 +225,12 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     _subOffers?.cancel();
     _subDriver?.cancel();
     _routeRetryTimer?.cancel();
+    _ageTicker?.cancel();
     _captainLocs.dispose();
     _pickupNoteCtrl.dispose();
     _dropoffNoteCtrl.dispose();
     _pharmacyNoteCtrl.dispose();
+    _pharmacyCostCtrl.dispose();
     _feedbackCtrl.dispose();
     super.dispose();
   }
@@ -272,11 +284,29 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         if (latV is! num || lngV is! num) return;
         final lat = latV.toDouble();
         final lng = lngV.toDouble();
-        final moved = _driverLoc == null ||
-            (_driverLoc!.latitude - lat).abs() > 0.00005 ||
-            (_driverLoc!.longitude - lng).abs() > 0.00005;
-        if (!moved) return; // نفس المكان: مفيش داعي لإعادة البناء
-        setState(() => _driverLoc = ll.LatLng(lat, lng));
+        final tsV = data?['updatedAt'];
+        final at = tsV is num
+            ? DateTime.fromMillisecondsSinceEpoch(tsV.toInt())
+            : DateTime.now();
+        final pos = ll.LatLng(lat, lng);
+        final prev = _driverLoc;
+        final moved = prev == null ||
+            (prev.latitude - lat).abs() > 0.00001 ||
+            (prev.longitude - lng).abs() > 0.00001;
+        // اتجاه الحركة من آخر نقطتين (لو اتحرك 3 متر على الأقل).
+        var bearing = _driverFix?.bearing;
+        if (prev != null && geo.distanceMeters(prev, pos) >= 3) {
+          bearing = geo.bearingDegrees(prev, pos);
+        }
+        final fix = GeoFix(position: pos, updatedAt: at, bearing: bearing);
+        if (!moved) {
+          _driverFix = fix; // نفس المكان: نحدّث وقت آخر تحديث بس من غير rebuild
+          return;
+        }
+        setState(() {
+          _driverLoc = pos;
+          _driverFix = fix;
+        });
         _refreshDriverRoute();
       }, onError: (e) => debugPrint('driver location unavailable: $e'));
       // لو موقع الكابتن معروف من قبل، نحسب مسار الوجهة الجديدة فورًا.
@@ -284,6 +314,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     } else {
       setState(() {
         _driverLoc = null;
+        _driverFix = null;
         _routeGeometry = [];
       });
     }
@@ -437,6 +468,59 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     _recalcDistance();
   }
 
+  ({District district, Village village})? _findVillage(String? id) {
+    if (id == null) return null;
+    for (final d in menofiaData) {
+      for (final v in d.villages) {
+        if (v.id == id) return (district: d, village: v);
+      }
+    }
+    return null;
+  }
+
+  /// بيانات الوجهة الحالية للحفظ كعنوان (أو null لو لسه مفيش وجهة).
+  Map<String, dynamic>? _currentDropoffData() {
+    final pt = _dropoffPoint;
+    final v = _dropoffVillage;
+    if (pt == null && v == null) return null;
+    return {
+      if (pt != null) ...{
+        'placeName': pt.placeName,
+        'displayText': pt.displayText,
+        'area': pt.area,
+        'lat': pt.latitude,
+        'lng': pt.longitude,
+      } else ...{
+        'placeName': v!.name,
+        'displayText': v.name,
+      },
+      if (v != null) 'villageId': v.id,
+      if (_dropoffNoteCtrl.text.trim().isNotEmpty) 'note': _dropoffNoteCtrl.text.trim(),
+    };
+  }
+
+  void _applySavedAddress(SavedAddress a) {
+    final match = _findVillage(a.villageId);
+    setState(() {
+      if (a.lat != null && a.lng != null) {
+        _dropoffPoint = PickedPlace(
+          location: SelectedLocation(
+              latitude: a.lat!, longitude: a.lng!, address: a.displayText),
+          placeName: a.placeName,
+          displayText: a.displayText,
+          area: a.area,
+          knownMatch: match,
+        );
+      } else {
+        _dropoffPoint = null;
+      }
+      _dropoffDistrict = match?.district;
+      _dropoffVillage = match?.village;
+      if (a.note.isNotEmpty) _dropoffNoteCtrl.text = a.note;
+    });
+    _recalcDistance();
+  }
+
   void _onPickupPicked(PickedPlace pl) {
     setState(() {
       _pickupPoint = pl;
@@ -450,35 +534,74 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     if (!_hasPickup || !_hasDropoff) return 0;
     final p = _pickupVillage, d = _dropoffVillage;
     if (p != null && d != null && p.id == d.id) {
-      return finalFare(configDefaultPricing.sameVillagePrice);
+      return finalFare(activePricing.sameVillagePrice);
     }
     return calculateTripFare(_actualRoadDist, _selectedVehicle);
+  }
+
+  // ── تسعير الصيدلية: أجرة التوصيل حسب المسافة (من الصيدلية للعميل) + تمن الأدوية ──
+
+  double get _pharmacyDeliveryFare => calculateDeliveryFare(_actualRoadDist);
+  double get _pharmacyGoodsCost => parseAmountInput(_pharmacyCostCtrl.text);
+  double get _pharmacyTotal =>
+      orderTotal(_pharmacyDeliveryFare, _pharmacyGoodsCost);
+
+  /// مكان المطعم اليدوي اللي العميل حدده (نقطة من الخريطة/GPS أو مركز القرية).
+  OrderPlace _manualRestaurantPickup(ManualRestaurantData d) {
+    final pp = d.pickupPoint;
+    if (pp != null) {
+      return OrderPlace(
+          address: pp.displayText,
+          lat: pp.latitude,
+          lng: pp.longitude,
+          villageName: pp.placeName);
+    }
+    final v = d.pickupVillage!;
+    return OrderPlace(
+        address: v.name,
+        lat: v.center.lat,
+        lng: v.center.lng,
+        villageName: v.name);
+  }
+
+  /// مكان الصيدلية اللي العميل حدده (نقطة من الخريطة/GPS أو مركز القرية).
+  OrderPlace _pharmacyPickupPlace() {
+    final pp = _pickupPoint;
+    if (pp != null) {
+      return OrderPlace(
+          address: 'صيدلية — ${pp.displayText}',
+          lat: pp.latitude,
+          lng: pp.longitude,
+          villageName: pp.placeName);
+    }
+    final v = _pickupVillage!;
+    return OrderPlace(
+        address: 'صيدلية — ${v.name}',
+        lat: v.center.lat,
+        lng: v.center.lng,
+        villageName: v.name);
   }
 
   Future<void> _handleAcceptOffer(Offer offer) async {
     final order = _activeOrder;
     if (order == null) return;
     try {
-      await order_service.updateOrderStatus(
-          order.id, OrderStatus.assigned, user.id, user.role);
-      await db.collection('orders').doc(order.id).update({
-        'driverId': offer.driverId,
-        'driverName': offer.driverName,
-        'driverPhone': offer.driverPhone,
-        'driverPhoto': offer.driverPhoto,
-        'acceptedAt': DateTime.now().millisecondsSinceEpoch,
-        'price': finalFare(offer.price),
-      });
+      // عملية واحدة (transaction): الحالة + الكابتن + السعر مع بعض أو مفيش.
+      await order_service.acceptOffer(
+          orderId: order.id, offerId: offer.id, customerId: user.id);
+      final goods = goodsTotalOf(order);
+      final total = (offer.price + goods).toInt();
       await NotificationService.notifyUser(
         userId: offer.driverId,
         title: 'تم قبول عرضك ✅',
-        body: '${user.name} وافق على عرضك ${finalFare(offer.price).toInt()} ج.م — ابدأ المشوار',
+        body: '${user.name} وافق على عرضك ${offer.price.toInt()} ج.م توصيل'
+            '${goods > 0 ? " (الإجمالي $total ج.م)" : ""} — ابدأ المشوار',
         type: 'SUCCESS',
         key: 'accepted_${order.id}',
         orderId: order.id,
       );
     } catch (e) {
-      if (mounted) showAppAlert(context, 'فشل قبول العرض');
+      if (mounted) showAppAlert(context, 'فشل قبول العرض: ${friendlyError(e)}');
     }
   }
 
@@ -493,6 +616,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     List<CartItem>? foodItems,
     String? prescriptionImage,
     PickedPlace? deliveryPoint,
+    double? goodsCost,
   }) async {
     // من شاشة المطعم بيجي deliveryVillage أو deliveryPoint (مكان فعلي من
     // الخريطة/الـ GPS)؛ غير كده بنستخدم اللي اختاره العميل في الشاشة الرئيسية.
@@ -502,6 +626,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       showAppAlert(context, 'يرجى تحديد مكان التوصيل');
       return;
     }
+    if (_isSubmitting) return; // حماية الضغط المزدوج (مسار المطعم بيقفل الشاشة فوراً)
     setState(() => _isSubmitting = true);
     try {
       // صورة الروشتة: نرفعها على Storage ونحفظ الرابط بدل base64 جوه الطلب
@@ -525,6 +650,11 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       }
 
       final orderPrice = price ?? _estimatedPrice;
+      // تمن البضاعة (أكل/أدوية) منفصل عن أجرة التوصيل: مبيتأثرش بعرض الكابتن.
+      final itemsTotal = foodItems == null
+          ? 0.0
+          : foodItems.fold<double>(0, (s, i) => s + i.price * i.quantity);
+      final goodsTotal = itemsTotal > 0 ? itemsTotal : (goodsCost ?? 0);
       final pp = _pickupPoint;
       final orderPickup = (_selectedCategory == OrderCategory.taxi &&
               (pp != null || _pickupVillage != null))
@@ -570,6 +700,8 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         if (foodItems != null)
           'foodItems': foodItems.map((e) => e.toMap()).toList(),
         if (rx != null) 'prescriptionImage': rx,
+        if (goodsCost != null && goodsCost > 0) 'goodsCost': goodsCost,
+        'goodsTotal': goodsTotal,
       };
 
       final newOrderId = await order_service.createOrder(orderData);
@@ -778,10 +910,11 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                 specialRequest: data.items,
                 deliveryVillage: data.village,
                 deliveryPoint: data.point,
-                price: 35, // سعر مبدأي تقديري (نفس نسخة الويب)
-                // مطعم يدوي: مكانه مش معروف. الإحداثيات 0 = "غير موجودة" (مش نقطة وهمية).
-                pickup: const OrderPlace(
-                    address: '', lat: 0, lng: 0, villageName: 'خارجي'),
+                // إجمالي الأوردر = أجرة التوصيل حسب المسافة (من المطعم للعميل) + تمن الأكل.
+                price: data.total,
+                goodsCost: data.goodsCost,
+                distance: data.roadDist,
+                pickup: _manualRestaurantPickup(data),
               );
               setState(() => _showManualRest = false);
             },
@@ -910,7 +1043,18 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
             final isActive = _selectedCategory == c.$1;
             return GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTap: () => setState(() => _selectedCategory = c.$1),
+              onTap: () {
+                if (_selectedCategory == c.$1) return;
+                // الاستلام مشترك بين المشوار والصيدلية: نصفّره عند تغيير النوع
+                // عشان مكان قديم ما يتحسبش في سعر الطلب الجديد.
+                setState(() {
+                  _selectedCategory = c.$1;
+                  _pickupVillage = null;
+                  _pickupPoint = null;
+                  _pickupDistrict = null;
+                });
+                _recalcDistance();
+              },
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
                 padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 12),
@@ -1067,6 +1211,28 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       ),
       const SizedBox(height: 24),
       LocationSelector(
+        label: 'مكان الصيدلية',
+        helper: 'من أي صيدلية الكابتن هيشتري؟ (بنحسب المشوار على المسافة)',
+        icon: LucideIcons.mapPin,
+        iconBg: C.emerald600,
+        selectedDistrict: _pickupDistrict,
+        selectedVillage: _pickupVillage,
+        onSelectDistrict: (d) => setState(() => _pickupDistrict = d),
+        onSelectVillage: _onPickupVillageChanged,
+        addressNoteCtrl: _pickupNoteCtrl,
+        pickedAddress: _pickupPoint?.displayText,
+        customPlaceName: _pickupPoint?.placeName,
+        customArea: _pickupPoint?.area,
+        onPickedOnMap: _onPickupPicked,
+      ),
+      const SizedBox(height: 20),
+      SavedAddressesBar(
+        userId: user.id,
+        currentData: _currentDropoffData,
+        onSelect: _applySavedAddress,
+      ),
+      const SizedBox(height: 14),
+      LocationSelector(
         label: 'مكان استلام العلاج',
         helper: 'أين سيسلمك الكابتن الطلب؟',
         icon: LucideIcons.checkCircle2,
@@ -1074,31 +1240,62 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         selectedDistrict: _dropoffDistrict,
         selectedVillage: _dropoffVillage,
         onSelectDistrict: (d) => setState(() => _dropoffDistrict = d),
-        onSelectVillage: (v) => setState(() {
-          _dropoffVillage = v;
-          _dropoffPoint = null;
-        }),
+        onSelectVillage: _onDropoffVillageChanged,
         addressNoteCtrl: _dropoffNoteCtrl,
         pickedAddress: _dropoffPoint?.displayText,
         customPlaceName: _dropoffPoint?.placeName,
         customArea: _dropoffPoint?.area,
         onPickedOnMap: _onDropoffPicked,
       ),
+      const SizedBox(height: 20),
+      Container(
+        decoration: BoxDecoration(
+          color: C.white.withOpacity(0.7),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: C.emerald950.withOpacity(0.05)),
+        ),
+        child: TextField(
+          controller: _pharmacyCostCtrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          textAlign: TextAlign.right,
+          textDirection: TextDirection.rtl,
+          style: T.s(14, T.w800, C.slate900),
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            border: InputBorder.none,
+            hintText: 'تمن الأدوية التقريبي بالجنيه (اختياري)',
+            hintStyle: T.s(12, T.w600, C.gray400),
+            contentPadding: const EdgeInsets.all(20),
+          ),
+        ),
+      ),
+      if (_hasPickup && _hasDropoff) ...[
+        const SizedBox(height: 16),
+        deliveryTotalCard(
+          isCalculating: _isCalculatingDist,
+          distanceKm: _actualRoadDist,
+          deliveryFare: _pharmacyDeliveryFare,
+          goodsLabel: 'تمن الأدوية',
+          goods: _pharmacyGoodsCost,
+          total: _pharmacyTotal,
+        ),
+      ],
       const SizedBox(height: 24),
       PressScale(
         onTap: (_isSubmitting ||
                 (_pharmacyNoteCtrl.text.isEmpty && _prescriptionImage == null) ||
-                !_hasDropoff)
+                !_hasDropoff ||
+                !_hasPickup ||
+                _isCalculatingDist)
             ? null
             : () => _handleCreateOrder(
                 specialRequest: _pharmacyNoteCtrl.text,
                 prescriptionImage: _prescriptionImage,
-                // الصيدلية مكانها مش معروف. الإحداثيات 0 = "غير موجودة" (مش نقطة وهمية).
-                pickup: const OrderPlace(
-                    address: 'صيدلية',
-                    lat: 0,
-                    lng: 0,
-                    villageName: 'أقرب صيدلية')),
+                // إجمالي الأوردر = أجرة التوصيل حسب المسافة + تمن الأدوية.
+                price: _pharmacyTotal,
+                goodsCost: _pharmacyGoodsCost,
+                distance: _actualRoadDist,
+                pickup: _pharmacyPickupPlace()),
         child: Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 18),
@@ -1271,6 +1468,12 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         onPickedOnMap: _onPickupPicked,
       ),
       const SizedBox(height: 20),
+      SavedAddressesBar(
+        userId: user.id,
+        currentData: _currentDropoffData,
+        onSelect: _applySavedAddress,
+      ),
+      const SizedBox(height: 14),
       LocationSelector(
         label: 'نقطة الوصول (النزول)',
         helper: 'إلى أين تريد الذهاب؟',
@@ -1485,7 +1688,102 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     } else if (order.status == OrderStatus.delivered) {
       return _deliveredRatingView(order);
     } else {
-      return _trackingView(context, order);
+      final canCancel = _canCancelAfterAssign(order);
+      return Stack(
+        children: [
+          _trackingView(context, order),
+          PositionedDirectional(
+            top: 12,
+            end: 12,
+            child: PressScale(
+              onTap: () => launchUrl(Uri(scheme: 'tel', path: emergencyNumber)),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: C.rose500,
+                  borderRadius: BorderRadius.circular(999),
+                  boxShadow: Sh.lg(),
+                ),
+                child: Text('طوارئ $emergencyNumber',
+                    style: T.s(11, T.w900, C.white)),
+              ),
+            ),
+          ),
+          if (canCancel)
+            PositionedDirectional(
+              top: 12,
+              start: 12,
+              child: PressScale(
+                onTap: () => _confirmCancelAssigned(order),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: C.white,
+                    borderRadius: BorderRadius.circular(999),
+                    boxShadow: Sh.lg(),
+                  ),
+                  child: Text('إلغاء الطلب',
+                      style: T.s(11, T.w900, C.rose500)),
+                ),
+              ),
+            ),
+        ],
+      );
+    }
+  }
+
+  /// بعد التعيين: الإلغاء متاح قبل الاستلام، وبعد الاستلام لو الطلب واقف من 30 دقيقة
+  /// من غير أي تحديث (كابتن اختفى). نفس شرط قواعد Firestore.
+  bool _canCancelAfterAssign(Order order) {
+    if (order.status == OrderStatus.assigned) return true;
+    if (order.status == OrderStatus.picked ||
+        order.status == OrderStatus.inDelivery) {
+      final idleMs = DateTime.now().millisecondsSinceEpoch - order.updatedAt;
+      return idleMs > 30 * 60 * 1000 && !order.customerReceived;
+    }
+    return false;
+  }
+
+  Future<void> _confirmCancelAssigned(Order order) async {
+    const reasons = [
+      'الكابتن اتأخر',
+      'غيّرت رأيي',
+      'الكابتن مبيردش',
+      'سبب آخر',
+    ];
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SimpleDialog(
+          title: Text('سبب الإلغاء', style: T.s(16, T.w900, C.slate900)),
+          children: [
+            for (final r in reasons)
+              SimpleDialogOption(
+                onPressed: () => Navigator.of(ctx).pop(r),
+                child: Text(r, style: T.s(14, T.w700, C.slate700)),
+              ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text('تراجع', style: T.s(13, T.w900, C.slate400)),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (reason == null) return;
+    await _cancelPendingOrder(order, reason: reason);
+    final driverId = order.driverId;
+    if (driverId != null) {
+      await NotificationService.notifyUser(
+        userId: driverId,
+        title: 'العميل ألغى الطلب',
+        body: 'السبب: $reason',
+        type: 'ALERT',
+        key: 'cancelled_${order.id}',
+        orderId: order.id,
+      );
     }
   }
 
@@ -1521,6 +1819,7 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
       await db.collection('orders').doc(order.id).update({
         'customerReceived': true,
         'customerReceivedAt': DateTime.now().millisecondsSinceEpoch,
+        'updatedAt': DateTime.now().millisecondsSinceEpoch,
       });
       if (order.driverId != null) {
         await NotificationService.notifyUser(
@@ -1598,14 +1897,14 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     );
   }
 
-  Future<void> _cancelPendingOrder(Order order) async {
+  Future<void> _cancelPendingOrder(Order order,
+      {String reason = 'ألغاه العميل'}) async {
     try {
-      await db
-          .collection('orders')
-          .doc(order.id)
-          .update({'status': OrderStatus.cancelled.value});
-    } catch (_) {
-      if (mounted) showAppAlert(context, 'تعذر إلغاء الطلب');
+      await order_service.updateOrderStatus(
+          order.id, OrderStatus.cancelled, user.id, user.role,
+          cancelReason: reason);
+    } catch (e) {
+      if (mounted) showAppAlert(context, 'تعذر إلغاء الطلب: ${friendlyError(e)}');
     }
   }
 
@@ -1739,7 +2038,8 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                     ),
                     child: _acceptingOfferId == offer.id
                         ? const Spinner()
-                        : Text('قبول ${finalFare(offer.price).toInt()} ج.م',
+                        : Text(
+                            'قبول ${(offer.price + goodsTotalOf(order)).toInt()} ج.م',
                             style: T.s(11, T.w900, C.white)),
                   ),
                 ),
@@ -1855,9 +2155,48 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
     final pickupPt = orderPickupPoint(order);
     final dropPt = orderDropoffPoint(order);
     final fitTarget = (isAssigned ? pickupPt : dropPt) ?? dropPt;
+    final driverPos = _driverLoc;
+    final fix = _driverFix;
+    // الجزء المتبقي من المسار بس (اللي الكابتن عدّاه بيختفي).
+    final remainingPath = (driverPos == null || _routeGeometry.length < 2)
+        ? _routeGeometry
+        : geo.remainingRoute(driverPos, _routeGeometry);
+    // المتبقي والوقت المتوقع من المسار الحقيقي (أو خط مستقيم × 1.3 لو المسار مش متاح).
+    double? metersLeft;
+    if (driverPos != null) {
+      if (_routeGeometry.length > 2) {
+        metersLeft = geo.remainingRouteMeters(driverPos, _routeGeometry);
+      } else if (fitTarget != null) {
+        metersLeft = geo.distanceMeters(driverPos, fitTarget) * 1.3;
+      }
+    }
+    final etaSeconds = metersLeft == null ? null : metersLeft / (25 * 1000 / 3600);
+    final locAge = fix == null ? null : DateTime.now().difference(fix.updatedAt);
+    final locStale = locAge != null && locAge > const Duration(seconds: 60);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (driverPos == null) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
+            decoration: BoxDecoration(
+              color: C.white,
+              borderRadius: BorderRadius.circular(32),
+              border: Border.all(color: C.slate100),
+              boxShadow: Sh.md(),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const PingDot(size: 8, color: C.amber500),
+                const SizedBox(width: 10),
+                Text('في انتظار موقع الكابتن على الخريطة...',
+                    style: T.s(12, T.w800, C.slate600)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+        ],
         if (_driverLoc != null) ...[
           Container(
             height: MediaQuery.of(context).size.height * 0.45,
@@ -1873,13 +2212,23 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                   center: _driverLoc!,
                   zoom: 15,
                   markers: [
-                    driverMarker(_driverLoc!),
                     if (isAssigned && pickupPt != null)
                       pickupPointMarker(pickupPt),
                     if (dropPt != null && (!isAssigned || pickupPt == null))
                       customerHomeMarker(dropPt),
                   ],
-                  routeGeometry: _routeGeometry,
+                  // ماركر الكابتن بيتحرك بسلاسة بين كل نقطتين (مش بيقفز).
+                  extraLayers: [
+                    AnimatedDriverMarkerLayer(
+                      fix: fix,
+                      dimmed: locStale,
+                      duration: const Duration(milliseconds: 2500),
+                      curve: Curves.linear,
+                    ),
+                  ],
+                  routeGeometry: remainingPath,
+                  refitOnMove: true,
+                  followCenter: true,
                   fitPoints: [
                     _driverLoc!,
                     if (fitTarget != null) fitTarget,
@@ -1925,7 +2274,10 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                                       style: T.s(9, T.w900, C.emerald400,
                                           letterSpacing: 1.4)),
                                   const SizedBox(height: 4),
-                                  Text('~ 8-12 دقيقة',
+                                  Text(
+                                      etaSeconds == null
+                                          ? '—'
+                                          : '~ ${geo.formatEta(etaSeconds)} • ${geo.formatDistance(metersLeft!)}',
                                       style: T.s(14, T.w900, C.white)),
                                 ],
                               ),
@@ -1951,9 +2303,14 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const PingDot(size: 8, color: C.emerald500),
+                        PingDot(
+                            size: 8,
+                            color: locStale ? C.amber500 : C.emerald500),
                         const SizedBox(width: 8),
-                        Text('الكابتن يتحرك الآن',
+                        Text(
+                            locStale
+                                ? geo.formatLastUpdate(locAge!)
+                                : 'الكابتن يتحرك الآن',
                             style: T.s(9, T.w900, C.slate800)),
                       ],
                     ),
@@ -2929,13 +3286,11 @@ class _RestaurantMenuViewState extends State<RestaurantMenuView> {
   double get _totalFoodItemsPrice =>
       _cart.fold(0.0, (sum, i) => sum + i.price * i.quantity);
 
+  /// أجرة التوصيل حسب المسافة الفعلية بين المطعم ومكان العميل (مفيش سعر ثابت).
   double get _deliveryPrice {
     final destName = _currentVillage?.name ?? _point?.placeName;
     if (destName == null) return 0;
-    final isSameVillage = widget.restaurant.address == destName;
-    if (isSameVillage) return finalFare(configDefaultPricing.sameVillagePrice);
-    final calc = _roadDist * configDefaultPricing.foodOutsidePricePerKm;
-    return finalFare(calc.roundToDouble());
+    return calculateDeliveryFare(_roadDist);
   }
 
   double get _finalEstimatedPrice => _totalFoodItemsPrice + _deliveryPrice;
@@ -3492,11 +3847,27 @@ class ManualRestaurantData {
 
   /// مكان التوصيل لو اتحدد بالـ GPS أو من الخريطة.
   final PickedPlace? point;
+
+  /// مكان المطعم (قرية أو نقطة من الخريطة) — بنحسب منه مسافة التوصيل.
+  final Village? pickupVillage;
+  final PickedPlace? pickupPoint;
+
+  /// تمن الأكل التقريبي (لو العميل كتبه) ومسافة الطريق بالكم.
+  final double goodsCost;
+  final double roadDist;
+
+  /// إجمالي الأوردر = أجرة التوصيل حسب المسافة + تمن الأكل.
+  final double total;
   const ManualRestaurantData(
       {required this.name,
       required this.items,
       required this.village,
-      this.point});
+      this.point,
+      this.pickupVillage,
+      this.pickupPoint,
+      this.goodsCost = 0,
+      this.roadDist = 0,
+      required this.total});
 }
 
 class ManualRestaurantView extends StatefulWidget {
@@ -3512,22 +3883,74 @@ class ManualRestaurantView extends StatefulWidget {
 class _ManualRestaurantViewState extends State<ManualRestaurantView> {
   final _restNameCtrl = TextEditingController();
   final _itemsCtrl = TextEditingController();
+  final _costCtrl = TextEditingController();
   District? _district;
   Village? _village;
   PickedPlace? _point;
+
+  // مكان المطعم: لازم يتحدد عشان أجرة التوصيل تتحسب حسب المسافة.
+  District? _pickupDistrict;
+  Village? _pickupVillage;
+  PickedPlace? _pickupPoint;
+  double _roadDist = 0;
+  bool _isCalculating = false;
+  int _calcReq = 0;
 
   @override
   void dispose() {
     _restNameCtrl.dispose();
     _itemsCtrl.dispose();
+    _costCtrl.dispose();
     super.dispose();
+  }
+
+  bool get _hasPickup => _pickupVillage != null || _pickupPoint != null;
+  bool get _hasDropoff => _village != null || _point != null;
+  double get _goods => parseAmountInput(_costCtrl.text);
+  double get _deliveryFare => calculateDeliveryFare(_roadDist);
+  double get _total => orderTotal(_deliveryFare, _goods);
+
+  /// مسافة الطريق من المطعم للعميل (ردود الطلبات القديمة بتتجاهل).
+  Future<void> _recalc() async {
+    final req = ++_calcReq;
+    if (!_hasPickup || !_hasDropoff) {
+      setState(() {
+        _roadDist = 0;
+        _isCalculating = false;
+      });
+      return;
+    }
+    final pLat = _pickupPoint?.latitude ?? _pickupVillage?.center.lat;
+    final pLng = _pickupPoint?.longitude ?? _pickupVillage?.center.lng;
+    final dLat = _point?.latitude ?? _village?.center.lat;
+    final dLng = _point?.longitude ?? _village?.center.lng;
+    if (pLat == null || pLng == null || dLat == null || dLng == null) {
+      setState(() {
+        _roadDist = 0;
+        _isCalculating = false;
+      });
+      return;
+    }
+    setState(() => _isCalculating = true);
+    try {
+      final res = await utils.getRoadDistance(pLat, pLng, dLat, dLng);
+      if (!mounted || req != _calcReq) return;
+      setState(() {
+        _roadDist = res.distance;
+        _isCalculating = false;
+      });
+    } catch (_) {
+      if (mounted && req == _calcReq) setState(() => _isCalculating = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final canSubmit = _restNameCtrl.text.isNotEmpty &&
         _itemsCtrl.text.isNotEmpty &&
-        (_village != null || _point != null);
+        _hasDropoff &&
+        _hasPickup &&
+        !_isCalculating;
     return Positioned.fill(
       child: Material(
         color: C.slate50,
@@ -3647,6 +4070,48 @@ class _ManualRestaurantViewState extends State<ManualRestaurantView> {
                         padding: const EdgeInsets.only(right: 8),
                         decoration: BoxDecoration(
                           border: Border(
+                              right: BorderSide(color: C.emerald500, width: 4)),
+                        ),
+                        child:
+                            Text('مكان المطعم', style: T.s(18, T.w900, C.slate800)),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    LocationSelector(
+                      label: '',
+                      helper: '',
+                      icon: LucideIcons.mapPin,
+                      iconBg: C.emerald600,
+                      selectedDistrict: _pickupDistrict,
+                      selectedVillage: _pickupVillage,
+                      onSelectDistrict: (d) => setState(() => _pickupDistrict = d),
+                      onSelectVillage: (v) {
+                        setState(() {
+                          _pickupVillage = v;
+                          _pickupPoint = null;
+                        });
+                        _recalc();
+                      },
+                      onPickedOnMap: (pl) {
+                        setState(() {
+                          _pickupPoint = pl;
+                          _pickupDistrict = pl.knownMatch?.district;
+                          _pickupVillage = pl.knownMatch?.village;
+                        });
+                        _recalc();
+                      },
+                      pickedAddress: _pickupPoint?.displayText,
+                      customPlaceName: _pickupPoint?.placeName,
+                      customArea: _pickupPoint?.area,
+                      minimal: true,
+                    ),
+                    const SizedBox(height: 24),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Container(
+                        padding: const EdgeInsets.only(right: 8),
+                        decoration: BoxDecoration(
+                          border: Border(
                               right: BorderSide(color: C.rose500, width: 4)),
                         ),
                         child:
@@ -3662,20 +4127,60 @@ class _ManualRestaurantViewState extends State<ManualRestaurantView> {
                       selectedDistrict: _district,
                       selectedVillage: _village,
                       onSelectDistrict: (d) => setState(() => _district = d),
-                      onSelectVillage: (v) => setState(() {
-                        _village = v;
-                        _point = null;
-                      }),
-                      onPickedOnMap: (pl) => setState(() {
-                        _point = pl;
-                        _district = pl.knownMatch?.district;
-                        _village = pl.knownMatch?.village;
-                      }),
+                      onSelectVillage: (v) {
+                        setState(() {
+                          _village = v;
+                          _point = null;
+                        });
+                        _recalc();
+                      },
+                      onPickedOnMap: (pl) {
+                        setState(() {
+                          _point = pl;
+                          _district = pl.knownMatch?.district;
+                          _village = pl.knownMatch?.village;
+                        });
+                        _recalc();
+                      },
                       pickedAddress: _point?.displayText,
                       customPlaceName: _point?.placeName,
                       customArea: _point?.area,
                       minimal: true,
                     ),
+                    const SizedBox(height: 24),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: C.white,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: C.slate100),
+                      ),
+                      child: TextField(
+                        controller: _costCtrl,
+                        keyboardType:
+                            const TextInputType.numberWithOptions(decimal: true),
+                        textAlign: TextAlign.right,
+                        textDirection: TextDirection.rtl,
+                        style: T.s(14, T.w800, C.slate900),
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
+                          border: InputBorder.none,
+                          hintText: 'تمن الأكل التقريبي بالجنيه (اختياري)',
+                          hintStyle: T.s(12, T.w600, C.gray400),
+                          contentPadding: const EdgeInsets.all(20),
+                        ),
+                      ),
+                    ),
+                    if (_hasPickup && _hasDropoff) ...[
+                      const SizedBox(height: 16),
+                      deliveryTotalCard(
+                        isCalculating: _isCalculating,
+                        distanceKm: _roadDist,
+                        deliveryFare: _deliveryFare,
+                        goodsLabel: 'تمن الأكل',
+                        goods: _goods,
+                        total: _total,
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -3694,7 +4199,12 @@ class _ManualRestaurantViewState extends State<ManualRestaurantView> {
                         name: _restNameCtrl.text,
                         items: _itemsCtrl.text,
                         village: _village,
-                        point: _point)),
+                        point: _point,
+                        pickupVillage: _pickupVillage,
+                        pickupPoint: _pickupPoint,
+                        goodsCost: _goods,
+                        roadDist: _roadDist,
+                        total: _total)),
                 child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(vertical: 28),
@@ -3722,3 +4232,73 @@ class _ManualRestaurantViewState extends State<ManualRestaurantView> {
     );
   }
 }
+
+// ═══════════════════════ مساعدات تسعير التوصيل ═══════════════════════
+
+/// بيحوّل نص مبلغ (بيقبل الأرقام العربية و"," ) لرقم ≥ 0، أو 0 لو فاضي/غلط.
+double parseAmountInput(String raw) {
+  const ar = '٠١٢٣٤٥٦٧٨٩';
+  final b = StringBuffer();
+  for (final r in raw.runes) {
+    final c = String.fromCharCode(r);
+    final i = ar.indexOf(c);
+    if (i >= 0) {
+      b.write(i);
+    } else if (c == '٫' || c == ',' || c == '،') {
+      b.write('.');
+    } else if ((r >= 0x30 && r <= 0x39) || c == '.') {
+      b.write(c);
+    }
+  }
+  final v = double.tryParse(b.toString());
+  if (v == null || v.isNaN || v < 0) return 0;
+  return v > 100000 ? 100000 : v;
+}
+
+
+/// ملخص سعر الصيدلية/الطلب: أجرة التوصيل (حسب المسافة) + تمن الطلبات = الإجمالي.
+Widget deliveryTotalCard({
+  required bool isCalculating,
+  required double distanceKm,
+  required double deliveryFare,
+  required String goodsLabel,
+  required double goods,
+  required double total,
+}) {
+  Widget row(String label, String value, {bool bold = false}) => Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(value, style: T.s(bold ? 18 : 13, bold ? T.w900 : T.w700, C.slate900)),
+          Text(label, style: T.s(bold ? 14 : 12, bold ? T.w900 : T.w600, C.slate600)),
+        ],
+      );
+  return Container(
+    padding: const EdgeInsets.all(20),
+    decoration: BoxDecoration(
+      color: C.emerald50.withOpacity(0.5),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: C.emerald500.withOpacity(0.2)),
+    ),
+    child: isCalculating
+        ? Center(child: Text('جاري قياس المسافة...', style: T.s(12, T.w700, C.slate500)))
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              row('المسافة', '~${distanceKm.toStringAsFixed(1)} كم'),
+              const SizedBox(height: 8),
+              row('أجرة التوصيل (حسب المسافة)', '${deliveryFare.toInt()} ج.م'),
+              if (goods > 0) ...[
+                const SizedBox(height: 8),
+                row(goodsLabel, '${goods.toStringAsFixed(goods == goods.roundToDouble() ? 0 : 2)} ج.م'),
+              ],
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 10),
+                child: Divider(height: 1),
+              ),
+              row('الإجمالي', '${total.toStringAsFixed(total == total.roundToDouble() ? 0 : 2)} ج.م',
+                  bold: true),
+            ],
+          ),
+  );
+}
+

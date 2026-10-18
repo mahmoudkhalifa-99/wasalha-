@@ -202,7 +202,7 @@ class OrderDetailsPanel extends StatelessWidget {
                 '${o.price.toInt()} ج.م'),
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: FareBreakdownView(fare: finalFare(tripFareOf(o))),
+            child: FareBreakdownView(total: finalFare(o.price), goods: goodsTotalOf(o)),
           ),
           if (items.isNotEmpty) ...[
             const SizedBox(height: 4),

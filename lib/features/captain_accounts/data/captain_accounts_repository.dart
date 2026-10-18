@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart' hide Order, Blob;
 
 import '../../../models/models.dart' show Order, stripFirestore;
+import '../../../pricing.dart' show commissionBaseOf;
 import '../domain/captain_accounts.dart';
 
 /// بيانات كابتن للعرض في الحسابات.
@@ -10,15 +11,21 @@ class DriverInfo {
   final String phone;
   final bool suspended;
 
-  /// رسوم المشوار المحفوظة للكابتن (جنيه)، أو null = الافتراضية (5 جنيه).
-  final double? feePerTrip;
+  /// نسبة عمولة محفوظة للكابتن (%)، أو null = الافتراضية (16%).
+  final double? commissionPercent;
+
+  /// العمولة المستحقة فعلاً (من محفظة الكابتن: بتتزوّد عند كل تسليم وبتنقص بالسداد).
+  final double commissionDue;
+  final double commissionPaid;
 
   const DriverInfo({
+    this.commissionDue = 0,
+    this.commissionPaid = 0,
     required this.id,
     required this.name,
     required this.phone,
     required this.suspended,
-    this.feePerTrip,
+    this.commissionPercent,
   });
 }
 
@@ -46,13 +53,15 @@ class CaptainAccountsRepository {
       for (final d in snap.docs)
         () {
           final m = d.data();
-          final cp = m['feePerTrip'];
+          final cp = m['commissionPercent'];
           return DriverInfo(
             id: d.id,
             name: (m['name'] as String?) ?? '',
             phone: (m['phone'] as String?) ?? '',
             suspended: (m['status'] as String?) == 'SUSPENDED',
-            feePerTrip: cp is num ? cp.toDouble() : null,
+            commissionPercent: cp is num ? cp.toDouble() : null,
+            commissionDue: _num((m['wallet'] as Map?)?['commissionDue']),
+            commissionPaid: _num((m['wallet'] as Map?)?['commissionPaid']),
           );
         }(),
     ];
@@ -76,6 +85,7 @@ class CaptainAccountsRepository {
         driverId: o.driverId,
         status: o.status,
         price: o.price,
+        base: commissionBaseOf(o),
         atMs: o.updatedAt,
         from: o.pickup.villageName ?? o.pickup.address,
         to: o.dropoff.villageName ?? o.dropoff.address,
@@ -84,9 +94,53 @@ class CaptainAccountsRepository {
     return OrdersSlice(rows, capped: snap.docs.length >= maxOrders);
   }
 
-  /// يحفظ رسوم مشوار الكابتن (جنيه). null = يرجّعها للافتراضية.
-  Future<void> saveFee(String driverId, double? fee) =>
+  static double _num(Object? v) => v is num ? v.toDouble() : 0;
+
+  /// تسجيل سداد عمولة من كابتن: سجل تسوية + خصم من المستحق + معاملة + سجل مراجعة،
+  /// كله في batch واحد (يا كله يتكتب يا مفيش).
+  Future<void> recordSettlement({
+    required String driverId,
+    required double amount,
+    required String adminId,
+    String note = '',
+  }) async {
+    if (amount <= 0) throw Exception('المبلغ لازم يكون أكبر من صفر');
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final batch = _db.batch();
+    final sRef = _db.collection('settlements').doc();
+    batch.set(sRef, {
+      'driverId': driverId,
+      'amount': amount,
+      'note': note,
+      'createdBy': adminId,
+      'createdAt': now,
+    });
+    batch.update(_db.collection('users').doc(driverId), {
+      'wallet.commissionDue': FieldValue.increment(-amount),
+      'wallet.commissionPaid': FieldValue.increment(amount),
+    });
+    batch.set(_db.collection('transactions').doc('settlement_${sRef.id}'), {
+      'userId': driverId,
+      'type': 'CREDIT',
+      'kind': 'SETTLEMENT',
+      'amount': amount,
+      'description': 'سداد عمولة للتطبيق${note.isEmpty ? '' : ' — $note'}',
+      'createdAt': now,
+      'createdBy': adminId,
+    });
+    batch.set(_db.collection('admin_audit').doc(), {
+      'action': 'COMMISSION_SETTLEMENT',
+      'targetUserId': driverId,
+      'amount': amount,
+      'performedBy': adminId,
+      'createdAt': now,
+    });
+    await batch.commit();
+  }
+
+  /// يحفظ نسبة عمولة الكابتن (%). null = يرجّعها للافتراضية (16%).
+  Future<void> saveCommission(String driverId, double? percent) =>
       _db.collection('users').doc(driverId).update({
-        'feePerTrip': fee == null ? FieldValue.delete() : fee,
+        'commissionPercent': percent == null ? FieldValue.delete() : percent,
       });
 }

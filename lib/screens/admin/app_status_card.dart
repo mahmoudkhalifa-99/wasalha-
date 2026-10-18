@@ -123,6 +123,51 @@ class _AppStatusCardState extends State<AppStatusCard> {
     }
   }
 
+  Future<void> _editMinVersion() async {
+    final ctrl = TextEditingController(text: _status.minVersion);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('الحد الأدنى لنسخة التطبيق'),
+          content: TextField(
+            controller: ctrl,
+            textDirection: TextDirection.ltr,
+            decoration: const InputDecoration(
+                hintText: 'مثال: 1.2.0 (فاضي = بدون حد أدنى)'),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('إلغاء')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('حفظ')),
+          ],
+        ),
+      ),
+    );
+    final value = ctrl.text.trim();
+    ctrl.dispose();
+    if (ok != true || !mounted) return;
+    final valid = value.isEmpty || RegExp(r'^\d+(\.\d+){0,2}$').hasMatch(value);
+    if (!valid) {
+      showAppAlert(context, 'صيغة النسخة غلط. مثال صحيح: 1.2.0');
+      return;
+    }
+    try {
+      await setAppEnabled(
+          enabled: _status.enabled,
+          message: _status.message,
+          byUid: widget.userId,
+          minVersion: value);
+    } catch (e) {
+      debugPrint('set min version failed: $e');
+      if (mounted) showAppAlert(context, 'تعذر حفظ الحد الأدنى للنسخة');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final enabled = _status.enabled;
@@ -157,6 +202,18 @@ class _AppStatusCardState extends State<AppStatusCard> {
                     textAlign: TextAlign.right,
                     style: T.s(11, T.w700,
                         enabled ? C.emerald600 : C.rose600)),
+                GestureDetector(
+                  onTap: _loaded ? _editMinVersion : null,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                        _status.minVersion.isEmpty
+                            ? 'الحد الأدنى للنسخة: غير محدد (اضغط للتعديل)'
+                            : 'الحد الأدنى للنسخة: ${_status.minVersion} (اضغط للتعديل)',
+                        textAlign: TextAlign.right,
+                        style: T.s(10, T.w700, C.slate500)),
+                  ),
+                ),
               ],
             ),
           ),

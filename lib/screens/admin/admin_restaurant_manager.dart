@@ -13,6 +13,7 @@ import '../../services/firebase_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_shadows.dart';
 import '../../theme/app_text.dart';
+import '../../services/storage_service.dart';
 import '../../utils.dart' as utils;
 import '../../widgets/common.dart';
 
@@ -98,8 +99,11 @@ class _AdminRestaurantManagerState extends State<AdminRestaurantManager> {
       final b64 = base64Encode(bytes);
       final mime =
           file.name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
-      return await utils.compressImage('data:$mime;base64,$b64');
-    } catch (_) {
+      final compressed = await utils.compressImage('data:$mime;base64,$b64');
+      return await StorageService.uploadImage(
+          folder: 'restaurants', dataUrl: compressed);
+    } catch (e) {
+      debugPrint('restaurant image upload failed: $e');
       return null;
     }
   }
@@ -529,8 +533,7 @@ class _AdminRestaurantManagerState extends State<AdminRestaurantManager> {
               border: Border.all(color: C.slate100),
             ),
             child: url.isNotEmpty
-                ? Image.memory(base64Decode(url.split(',').last),
-                    fit: BoxFit.cover)
+                ? SmartImage(url, fit: BoxFit.cover)
                 : Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [

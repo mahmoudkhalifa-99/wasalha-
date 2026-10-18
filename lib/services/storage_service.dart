@@ -38,6 +38,30 @@ class StorageService {
   /// حد وثيقة Firestore 1 ميجا، وباقي الوثيقة (أصناف/عناوين/تاريخ) محتاج مساحة.
   static const int maxInlineChars = 700 * 1024;
 
+  /// يرفع صورة (data URL) على [folder] (مثلاً `ads` أو `restaurants` أو `profiles/{uid}`)
+  /// ويرجّع رابط التحميل. بدل ما الصورة تتخزن base64 جوه مستند Firestore (حد 1 ميجا
+  /// وكل قراءة بتنزّلها). بيرمي استثناء لو الصورة غير صالحة أو الرفع فشل/اتأخر.
+  static Future<String> uploadImage({
+    required String folder,
+    required String dataUrl,
+    FirebaseStorage? storage,
+    Duration timeout = const Duration(seconds: 60),
+  }) async {
+    final img = decodeImageDataUrl(dataUrl);
+    if (img == null) throw const FormatException('invalid image data URL');
+    final ext = img.mime.contains('png') ? 'png' : 'jpg';
+    final ref = (storage ?? FirebaseStorage.instance)
+        .ref('$folder/${DateTime.now().millisecondsSinceEpoch}.$ext');
+    final task = ref.putData(img.bytes, SettableMetadata(contentType: img.mime));
+    try {
+      await task.timeout(timeout);
+    } on TimeoutException {
+      await task.cancel();
+      rethrow;
+    }
+    return ref.getDownloadURL();
+  }
+
   /// يرفع صورة روشتة (data URL) على `prescriptions/{uid}/...` ويرجّع رابط التحميل.
   /// بيرمي استثناء لو الصورة غير صالحة أو الرفع فشل/اتأخر.
   static Future<String> uploadPrescription({

@@ -43,6 +43,7 @@ enum UserRole {
   operator('OPERATOR'),
   driver('DRIVER'),
   customer('CUSTOMER'),
+  restaurant('RESTAURANT'), // حساب مطعم: بيستقبل أوردرات مطعمه ويحدّث حالة التحضير
   unknown('');
 
   final String value;
@@ -380,6 +381,8 @@ class CartItem {
       {'id': id, 'name': name, 'price': price, 'quantity': quantity};
 }
 
+/// عرض كابتن على طلب. [price] هنا = أجرة التوصيل بس (25–900 ج.م)، مش إجمالي الأوردر:
+/// تمن الأكل/الأدوية بيفضل في الطلب نفسه (goodsTotal) ومبيتمسحش بقبول العرض.
 class Offer {
   final String id;
   final String orderId;
@@ -623,8 +626,24 @@ class Order {
   final String? restaurantId;
   final String? restaurantName;
   final String? specialRequest;
+  /// تمن البضاعة اللي الكابتن بيدفعها (أدوية الصيدلية/المطعم اليدوي). طلبات المطاعم
+  /// بتتحسب من foodItems. الـ price = أجرة التوصيل + تمن البضاعة.
+  final double? goodsCost;
   final bool customerReceived; // العميل أكد إنه استلم الطلب فعلاً
   final bool ratingSkipped; // العميل تخطى التقييم
+  /// تمن البضاعة (أكل/أدوية) اللي بتتدفع للمحل — مش جزء من أجرة الكابتن. بيتكتب مرة
+  /// واحدة وقت الإنشاء. null = طلب قديم (بيتحسب من foodItems/goodsCost).
+  final double? goodsTotal;
+  /// أجرة التوصيل الحالية (بتتغيّر بعد قبول عرض). price = deliveryFare + goodsTotal.
+  final double? deliveryFare;
+  /// أجرة التوصيل الأصلية وقت الإنشاء (بنرجعلها لو الكابتن اعتذر).
+  final double? baseFare;
+  final String? acceptedOfferId;
+  /// حالة التحضير من المطعم: ACCEPTED / PREPARING / READY / REJECTED (null = لسه ما ردّش).
+  final String? restaurantStatus;
+  final String? restaurantNote;
+  final String? cancelReason;
+  final String? cancelledBy;
 
   const Order({
     required this.id,
@@ -668,8 +687,17 @@ class Order {
     this.restaurantId,
     this.restaurantName,
     this.specialRequest,
+    this.goodsCost,
     this.customerReceived = false,
     this.ratingSkipped = false,
+    this.goodsTotal,
+    this.deliveryFare,
+    this.baseFare,
+    this.acceptedOfferId,
+    this.restaurantStatus,
+    this.restaurantNote,
+    this.cancelReason,
+    this.cancelledBy,
   });
 
   factory Order.fromMap(Map<String, dynamic> m, [String? docId]) => Order(
@@ -723,8 +751,20 @@ class Order {
         restaurantId: m['restaurantId'] as String?,
         restaurantName: m['restaurantName'] as String?,
         specialRequest: m['specialRequest'] as String?,
+        goodsCost: m['goodsCost'] is num ? (m['goodsCost'] as num).toDouble() : null,
         customerReceived: m['customerReceived'] == true,
         ratingSkipped: m['ratingSkipped'] == true,
+        goodsTotal:
+            m['goodsTotal'] is num ? (m['goodsTotal'] as num).toDouble() : null,
+        deliveryFare: m['deliveryFare'] is num
+            ? (m['deliveryFare'] as num).toDouble()
+            : null,
+        baseFare: m['baseFare'] is num ? (m['baseFare'] as num).toDouble() : null,
+        acceptedOfferId: m['acceptedOfferId'] as String?,
+        restaurantStatus: m['restaurantStatus'] as String?,
+        restaurantNote: m['restaurantNote'] as String?,
+        cancelReason: m['cancelReason'] as String?,
+        cancelledBy: m['cancelledBy'] as String?,
       );
 
   Map<String, dynamic> toMap() => stripFirestore({
@@ -769,6 +809,15 @@ class Order {
         'restaurantId': restaurantId,
         'restaurantName': restaurantName,
         'specialRequest': specialRequest,
+        'goodsCost': goodsCost,
+        'goodsTotal': goodsTotal,
+        'deliveryFare': deliveryFare,
+        'baseFare': baseFare,
+        'acceptedOfferId': acceptedOfferId,
+        'restaurantStatus': restaurantStatus,
+        'restaurantNote': restaurantNote,
+        'cancelReason': cancelReason,
+        'cancelledBy': cancelledBy,
       }) as Map<String, dynamic>;
 }
 
@@ -776,18 +825,33 @@ class Wallet {
   final double balance;
   final double totalEarnings;
   final double withdrawn;
+
+  /// عمولة التطبيق المستحقة على الكابتن (من أوردرات اتسلّمت ولسه ما اتسدّدتش).
+  /// بتتكتب من Cloud Function عند التسليم، وبتنقص بتسوية من الأدمن.
+  final double commissionDue;
+
+  /// إجمالي اللي الكابتن سدّده للتطبيق.
+  final double commissionPaid;
   const Wallet(
-      {this.balance = 0, this.totalEarnings = 0, this.withdrawn = 0});
+      {this.balance = 0,
+      this.totalEarnings = 0,
+      this.withdrawn = 0,
+      this.commissionDue = 0,
+      this.commissionPaid = 0});
 
   factory Wallet.fromMap(Map? m) => Wallet(
         balance: _d(m?['balance']),
         totalEarnings: _d(m?['totalEarnings']),
         withdrawn: _d(m?['withdrawn']),
+        commissionDue: _d(m?['commissionDue']),
+        commissionPaid: _d(m?['commissionPaid']),
       );
   Map<String, dynamic> toMap() => {
         'balance': balance,
         'totalEarnings': totalEarnings,
         'withdrawn': withdrawn,
+        'commissionDue': commissionDue,
+        'commissionPaid': commissionPaid,
       };
 }
 
@@ -818,6 +882,8 @@ class AppUser {
   final String? plateNumber;
   final String? operatorId;
   final String? zoneId;
+  /// لحساب المطعم: معرّف المطعم (restaurants/{id}) اللي بيستقبل أوردراته.
+  final String? restaurantId;
   final Wallet wallet;
   final UserLocation? location;
 
@@ -832,6 +898,7 @@ class AppUser {
     this.vehicleType,
     this.plateNumber,
     this.operatorId,
+    this.restaurantId,
     this.zoneId,
     required this.wallet,
     this.location,
@@ -849,6 +916,7 @@ class AppUser {
         plateNumber: m['plateNumber'] as String?,
         operatorId: m['operatorId'] as String?,
         zoneId: m['zoneId'] as String?,
+        restaurantId: m['restaurantId'] as String?,
         wallet: Wallet.fromMap(m['wallet'] as Map?),
         location: m['location'] is Map
             ? UserLocation.fromMap(m['location'] as Map)
@@ -867,6 +935,7 @@ class AppUser {
         'plateNumber': plateNumber,
         'operatorId': operatorId,
         'zoneId': zoneId,
+        'restaurantId': restaurantId,
         'wallet': wallet.toMap(),
         'location': location?.toMap(),
       }) as Map<String, dynamic>;

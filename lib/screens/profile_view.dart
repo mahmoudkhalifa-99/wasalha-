@@ -15,6 +15,10 @@ import '../theme/app_colors.dart';
 import '../theme/app_shadows.dart';
 import '../theme/app_text.dart';
 import '../widgets/common.dart';
+import 'legal_view.dart';
+import 'tickets_view.dart';
+import '../services/storage_service.dart';
+import '../utils.dart' as utils;
 
 /// نسخة Flutter من pages/ProfileView.tsx
 class ProfileView extends StatefulWidget {
@@ -87,9 +91,11 @@ class _ProfileViewState extends State<ProfileView> {
       final b64 = base64Encode(bytes);
       final mime =
           file.name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
-      final dataUrl = 'data:$mime;base64,$b64';
-      await db.collection('users').doc(widget.user.id).update({'photoURL': dataUrl});
-      if (mounted) setState(() => _photoOverride = dataUrl);
+      final compressed = await utils.compressImage('data:$mime;base64,$b64');
+      final url = await StorageService.uploadImage(
+          folder: 'profiles/${widget.user.id}', dataUrl: compressed);
+      await db.collection('users').doc(widget.user.id).update({'photoURL': url});
+      if (mounted) setState(() => _photoOverride = url);
     } catch (e) {
       if (mounted) showAppAlert(context, 'فشل في حفظ الصورة');
     } finally {
@@ -231,6 +237,14 @@ class _ProfileViewState extends State<ProfileView> {
                       ],
                       _basicInfoCard(),
                       const SizedBox(height: 16),
+                      TextButton.icon(
+                        onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                            builder: (_) => TicketsView(user: widget.user))),
+                        icon: const Icon(LucideIcons.messageCircle, size: 16),
+                        label: Text('الدعم والشكاوى', style: T.s(12, T.w900, C.emerald700)),
+                      ),
+                      const LegalLinks(),
+                      const SizedBox(height: 12),
                       _logoutButton(),
                       if (_canDeleteAccount) ...[
                         const SizedBox(height: 12),
@@ -414,7 +428,7 @@ class _ProfileViewState extends State<ProfileView> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Text('رصيد المحفظة',
+                    Text(widget.user.role == UserRole.driver ? 'أرباحي' : 'رصيد المحفظة',
                         style: T.s(11, T.w700, C.emerald400)),
                     const SizedBox(height: 2),
                     Row(
@@ -425,7 +439,11 @@ class _ProfileViewState extends State<ProfileView> {
                             style: T.s(11, T.w700,
                                 C.white.withOpacity(0.6))),
                         const SizedBox(width: 4),
-                        Text(widget.user.wallet.balance.toStringAsFixed(2),
+                        Text(
+                            (widget.user.role == UserRole.driver
+                                    ? widget.user.wallet.totalEarnings
+                                    : widget.user.wallet.balance)
+                                .toStringAsFixed(2),
                             style: T.s(24, T.w900, C.white)),
                       ],
                     ),

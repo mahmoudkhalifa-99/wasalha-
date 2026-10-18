@@ -19,6 +19,7 @@ class AnimatedDriverMarkerLayer extends StatefulWidget {
     required this.fix,
     this.dimmed = false,
     this.duration = const Duration(milliseconds: 900),
+    this.curve = Curves.easeInOut,
   });
 
   final GeoFix? fix;
@@ -26,6 +27,10 @@ class AnimatedDriverMarkerLayer extends StatefulWidget {
   /// true لما الموقع قديم/غير متاح: الماركر بيظهر رمادي بدل الأخضر.
   final bool dimmed;
   final Duration duration;
+
+  /// منحنى الحركة. للتتبع المستمر (تحديثات متتالية) الأفضل Curves.linear عشان
+  /// الماركر ما يقفش ويتحرك مع كل نقطة.
+  final Curve curve;
 
   @override
   State<AnimatedDriverMarkerLayer> createState() =>
@@ -87,7 +92,7 @@ class _AnimatedDriverMarkerLayerState extends State<AnimatedDriverMarkerLayer>
     _c.forward(from: 0);
   }
 
-  double get _t => Curves.easeInOut.transform(_c.value);
+  double get _t => widget.curve.transform(_c.value);
 
   LatLng _currentPoint() {
     final a = _from!;

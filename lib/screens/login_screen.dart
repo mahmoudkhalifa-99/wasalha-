@@ -15,6 +15,7 @@ import '../theme/app_shadows.dart';
 import '../theme/app_text.dart';
 import '../widgets/common.dart';
 import '../widgets/form_fields.dart';
+import 'legal_view.dart';
 import '../services/remembered_login.dart';
 import '../services/session_prefs.dart';
 import 'verify_email_screen.dart' show needsEmailVerification;
@@ -468,6 +469,10 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                         const Spacer(),
+                        const Padding(
+                          padding: EdgeInsets.only(top: 16),
+                          child: LegalLinks(),
+                        ),
                         Padding(
                           padding: const EdgeInsets.only(top: 24),
                           child: Text(

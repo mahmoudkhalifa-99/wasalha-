@@ -72,6 +72,9 @@ class _WalletViewState extends State<WalletView> {
         _transactions = docs;
         _loading = false;
       });
+    }, onError: (e) {
+      debugPrint('wallet transactions stream error: $e');
+      if (mounted) setState(() => _loading = false);
     });
   }
 
@@ -248,7 +251,7 @@ class _WalletViewState extends State<WalletView> {
                 ],
               ),
               const SizedBox(height: 4),
-              Text('يمكنك استخدام رصيدك لدفع المشاوير والطلبات بدون كاش',
+              Text('الدفع حالياً كاش للكابتن عند الاستلام — الدفع من الرصيد غير متاح بعد',
                   style: T.s(11, T.w500, C.slate400)),
               const SizedBox(height: 16),
               Row(

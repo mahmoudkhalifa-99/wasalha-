@@ -7,6 +7,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import '../services/pricing_config_service.dart';
 
 import '../app_router.dart';
 import '../constants.dart';
@@ -38,6 +40,7 @@ import 'login_screen.dart';
 import 'onboarding_screen.dart';
 import 'notifications_view.dart';
 import 'support_view.dart';
+import 'restaurant_dashboard.dart';
 import 'complete_phone_screen.dart';
 import 'app_disabled_screen.dart';
 import 'suspended_screen.dart';
@@ -78,6 +81,7 @@ class _AppShellState extends State<AppShell> {
   // تفعيل/تعطيل التطبيق من السوبر أدمن (config/app)
   StreamSubscription<AppStatus>? _appStatusSub;
   AppStatus _appStatus = const AppStatus();
+  String _appVersion = '';
   String? _pushForUserId;
   String? _notifKey;
   String _userSig = '';
@@ -86,6 +90,9 @@ class _AppShellState extends State<AppShell> {
   void initState() {
     super.initState();
     _listenAuth();
+    PackageInfo.fromPlatform().then((p) {
+      if (mounted) setState(() => _appVersion = p.version);
+    }).catchError((e) => debugPrint('package info: $e'));
     _appStatusSub = appStatusStream().listen((st) {
       if (mounted) setState(() => _appStatus = st);
     }, onError: (e) => debugPrint('app status stream: $e'));
@@ -286,6 +293,7 @@ class _AppShellState extends State<AppShell> {
   Future<void> _setupPush(String userId) async {
     if (_pushForUserId == userId) return;
     _pushForUserId = userId;
+    startPricingConfigSync(); // التسعير الحي من config/pricing
     try {
       final messaging = FirebaseMessaging.instance;
 
@@ -374,6 +382,13 @@ class _AppShellState extends State<AppShell> {
     if (!_appStatus.enabled && _user!.role != UserRole.admin) {
       return AppDisabledScreen(
           message: _appStatus.displayMessage, onLogout: _handleLogout);
+    }
+    // نسخة أقدم من الحد الأدنى (config/app.minVersion): لازم تحديث من المتجر
+    if (_appStatus.requiresUpdate(_appVersion) && _user!.role != UserRole.admin) {
+      return AppDisabledScreen(
+          title: 'لازم تحدّث التطبيق',
+          message: 'النسخة اللي معاك قديمة ومبقتش مدعومة. حدّث وصلها من المتجر وارجع كمّل.',
+          onLogout: _handleLogout);
     }
     // لازم يأكد البريد الأول (حسابات الإيميل/الباسورد فقط، الأدمن وجوجل مستثنين)
     if (needsEmailVerification(auth.currentUser)) {
@@ -518,6 +533,8 @@ class _AppShellState extends State<AppShell> {
         return CourierDashboard(user: user);
       case UserRole.customer:
         return CustomerDashboard(user: user);
+      case UserRole.restaurant:
+        return RestaurantDashboard(user: user, onLogout: _handleLogout);
       case UserRole.unknown:
         return Center(
           child: Padding(

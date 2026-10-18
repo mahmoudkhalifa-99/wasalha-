@@ -1,7 +1,8 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart' hide Order, Blob;
-import 'package:flutter/foundation.dart' show setEquals;
+import 'package:flutter/foundation.dart'
+    show setEquals, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
@@ -9,11 +10,15 @@ import 'package:latlong2/latlong.dart' as ll;
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../core/map/geo_utils.dart' as geo;
 import '../features/tracking/models/tracking_models.dart' show GeoFix;
+import '../features/tracking/widgets/animated_driver_marker.dart' show AnimatedDriverMarkerLayer;
 import '../features/tracking/services/driver_location_source.dart';
 import '../features/verification/ui/verification_banner.dart';
 import '../models/models.dart';
+import '../config_constants.dart' show activePricing;
 import '../pricing.dart';
+import 'courier_earnings_view.dart';
 import '../services/back_interceptor.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
@@ -31,7 +36,7 @@ import 'activity_view.dart';
 import 'chat_view.dart';
 import 'profile_view.dart';
 
-enum _CourierView { home, map, activity, profile }
+enum _CourierView { home, map, activity, profile, earnings }
 
 /// نسخة Flutter من pages/CourierDashboard.tsx — نفس المنطق والتصميم بالظبط.
 class CourierDashboard extends StatefulWidget {
@@ -53,6 +58,7 @@ class _CourierDashboardState extends State<CourierDashboard> {
   bool _showChat = false;
 
   ll.LatLng _currentLocation = const ll.LatLng(30.556, 31.008);
+  GeoFix? _myFix; // آخر نقطة GPS للكابتن (باتجاهها) للماركر المتحرك
   ll.LatLng? _customerLocation;
   List<ll.LatLng> _routeGeometry = [];
 
@@ -151,10 +157,7 @@ class _CourierDashboardState extends State<CourierDashboard> {
       await _posSub?.cancel();
       if (!mounted || !_isOnline) return;
       _posSub = Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          distanceFilter: 10,
-        ),
+        locationSettings: _gpsSettings(),
       ).listen(_onPosition, onError: _onGpsError, cancelOnError: true);
     } catch (err) {
       debugPrint('location watch failed: $err');
@@ -164,15 +167,54 @@ class _CourierDashboardState extends State<CourierDashboard> {
     }
   }
 
+  /// إعدادات الـ GPS. على أندرويد بنشغّل خدمة Foreground عشان التتبع يفضل شغال
+  /// والتطبيق متصغّر (الكابتن بيفتح خرائط/واتساب وهو سايق) — من غيرها أندرويد
+  /// بيوقف تحديثات الموقع والعميل بيشوف الكابتن واقف في مكانه.
+  LocationSettings _gpsSettings() {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10,
+        intervalDuration: const Duration(seconds: 5),
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: 'وصلها — أنت أونلاين',
+          notificationText: 'بنشارك موقعك مع العميل أثناء المشوار',
+          notificationChannelName: 'تتبع موقع الكابتن',
+          enableWakeLock: true,
+          setOngoing: true,
+        ),
+      );
+    }
+    return const LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 10,
+    );
+  }
+
   void _onPosition(Position pos) {
     if (!mounted) return;
     _gpsFailures = 0;
     _lastGpsIssue = null;
     final newLoc = ll.LatLng(pos.latitude, pos.longitude);
-    setState(() => _currentLocation = newLoc);
+    // الاتجاه: من اتجاه الجهاز لو بيتحرك بسرعة، وإلا من آخر نقطتين، وإلا آخر اتجاه.
+    final prevLoc = _myFix?.position;
+    double? bearing = _myFix?.bearing;
+    if (pos.speed > 1 && pos.heading >= 0) {
+      bearing = pos.heading;
+    } else if (prevLoc != null && geo.distanceMeters(prevLoc, newLoc) >= 3) {
+      bearing = geo.bearingDegrees(prevLoc, newLoc);
+    }
+    final fix = GeoFix(
+        position: newLoc,
+        updatedAt: DateTime.now(),
+        bearing: bearing,
+        accuracy: pos.accuracy);
+    setState(() {
+      _currentLocation = newLoc;
+      _myFix = fix;
+    });
     // الـ publisher بيحدّ المعدل وبيكتب موقع واحد في المرة (حتى أوفلاين).
-    _publisher.publish(
-        GeoFix(position: newLoc, updatedAt: DateTime.now(), accuracy: pos.accuracy));
+    _publisher.publish(fix);
     _recalcRoute();
   }
 
@@ -453,9 +495,14 @@ class _CourierDashboardState extends State<CourierDashboard> {
         }
       }
       setState(() {
+        // الأوردرات المنتظرة القديمة (فوق ساعة) مبتظهرش حتى لو الدالة المجدولة لسه ما لغتهاش.
+        final staleBefore = DateTime.now()
+            .subtract(const Duration(hours: 1))
+            .millisecondsSinceEpoch;
         _availableOrders = snap.docs
             .map((d) => Order.fromMap(
                 stripFirestore(d.data()) as Map<String, dynamic>, d.id))
+            .where((o) => o.createdAt == 0 || o.createdAt >= staleBefore)
             .toList();
       });
       _pendingLoaded = true;
@@ -513,15 +560,23 @@ class _CourierDashboardState extends State<CourierDashboard> {
         setState(() => _customerLocation = ll.LatLng(
             (loc['lat'] as num).toDouble(), (loc['lng'] as num).toDouble()));
       }
-    }, onError: (e) => handleFirestoreError(
-        e, OperationType.get, 'users/${order.customerId}'));
+    }, onError: (e) {
+      // قواعد القراءة مبقتش بتسمح بقراءة وثيقة عميل: مفيش موقع عميل متاح، بنكمّل من غيره.
+      debugPrint('customer location unavailable: $e');
+    });
   }
 
   Future<void> _handleSendOffer(String orderId) async {
     final typed = double.tryParse(_offerPriceCtrl.text);
     if (typed == null || _isSubmitting) return;
-    // الحد الأدنى 25 ج.م: أي عرض أقل بيترفع تلقائياً لـ 25
-    final price = finalFare(typed);
+    if (_activeOrder != null) {
+      showAppAlert(context, 'عندك مشوار شغال — خلّصه الأول قبل ما تقدّم عرض جديد');
+      return;
+    }
+    // العرض = أجرة التوصيل بس (تمن الأكل/الأدوية بيتضاف تلقائياً). من 25 لـ 900.
+    final price = finalFare(typed) > activePricing.maxPrice
+        ? activePricing.maxPrice
+        : finalFare(typed);
     setState(() => _isSubmitting = true);
     try {
       // رسالة ودّية لو الحساب مش مسموح له يستقبل طلبات (الحجب الفعلي في قواعد Firestore).
@@ -551,7 +606,7 @@ class _CourierDashboardState extends State<CourierDashboard> {
         await NotificationService.notifyUser(
           userId: target.first.customerId,
           title: 'وصلك عرض سعر جديد 💰',
-          body: 'الكابتن ${user.name} عرض ${price.toInt()} ج.م على طلبك',
+          body: 'الكابتن ${user.name} عرض ${price.toInt()} ج.م توصيل على طلبك',
           type: 'SUCCESS',
           key: 'offer_${offerRef.id}',
           orderId: orderId,
@@ -659,7 +714,14 @@ class _CourierDashboardState extends State<CourierDashboard> {
       return ProfileView(
         user: user,
         onUpdate: (_) {},
+        onOpenWallet: () => setState(() => _activeView = _CourierView.earnings),
         onBack: () => setState(() => _activeView = _CourierView.home),
+      );
+    }
+    if (_activeView == _CourierView.earnings) {
+      return CourierEarningsView(
+        user: user,
+        onBack: () => setState(() => _activeView = _CourierView.profile),
       );
     }
 
@@ -841,6 +903,12 @@ class _CourierDashboardState extends State<CourierDashboard> {
                 Text('تقديم عرض سعر للمشوار',
                     textAlign: TextAlign.center,
                     style: T.s(20, T.w900, C.slate900)),
+                if (goodsTotalOf(o) > 0) ...[
+                  const SizedBox(height: 8),
+                  Text('اكتب أجرة التوصيل بس — تمن الطلبات (${goodsTotalOf(o).toStringAsFixed(0)} ج.م) بيتضاف تلقائياً',
+                      textAlign: TextAlign.center,
+                      style: T.s(12, T.w700, C.slate500)),
+                ],
                 const SizedBox(height: 24),
                 Container(
                   decoration: BoxDecoration(
@@ -862,18 +930,20 @@ class _CourierDashboardState extends State<CourierDashboard> {
                     style: T.s(48, T.w900, C.slate900),
                     decoration: InputDecoration(
                       border: InputBorder.none,
-                      hintText: o.price.toStringAsFixed(0),
+                      hintText: tripFareOf(o).toStringAsFixed(0),
                       hintStyle: T.s(48, T.w900, C.gray400),
                       contentPadding: const EdgeInsets.all(32),
                     ),
                   ),
                 ),
                 const SizedBox(height: 16),
-                // قيمة الرحلة ← العمولة ← صافي المستحق (بنفس قاعدة الحد الأدنى 25)
+                // إجمالي الأوردر ← عمولة 16% ← صافي المستحق (بنفس قاعدة الحد الأدنى 25)
                 ValueListenableBuilder<TextEditingValue>(
                   valueListenable: _offerPriceCtrl,
                   builder: (_, v, __) => FareBreakdownView(
-                      fare: finalFare(double.tryParse(v.text) ?? o.price)),
+                      total: finalFare(double.tryParse(v.text) ?? tripFareOf(o)) +
+                          goodsTotalOf(o),
+                      goods: goodsTotalOf(o)),
                 ),
                 const SizedBox(height: 24),
                 Row(
@@ -980,7 +1050,7 @@ class _CourierDashboardState extends State<CourierDashboard> {
                 PressScale(
                   onTap: () => setState(() {
                     _showOfferInputFor = o.id;
-                    _offerPriceCtrl.text = finalFare(o.price).toStringAsFixed(0);
+                    _offerPriceCtrl.text = finalFare(tripFareOf(o)).toStringAsFixed(0);
                   }),
                   child: Container(
                     width: double.infinity,
@@ -1065,7 +1135,7 @@ class _CourierDashboardState extends State<CourierDashboard> {
                 ],
               ),
               const SizedBox(height: 20),
-              FareBreakdownView(fare: finalFare(tripFareOf(order))),
+              FareBreakdownView(total: finalFare(order.price), goods: goodsTotalOf(order)),
               const SizedBox(height: 16),
               Container(
                 padding: const EdgeInsets.all(20),
@@ -1313,30 +1383,45 @@ class _CourierDashboardState extends State<CourierDashboard> {
             WasalhaMap(
               center: _currentLocation,
               zoom: 15,
-              markers: [
-                Marker(
-                  point: _currentLocation,
-                  width: 48,
-                  height: 48,
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: C.emerald600,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: C.white, width: 3),
-                      boxShadow: Sh.xl(),
-                    ),
-                    child: const Icon(LucideIcons.navigation,
-                        size: 20, color: C.white),
+              // ماركر الكابتن بيتحرك بسلاسة بين نقاط الـ GPS؛ لحد أول نقطة بنعرض
+              // الماركر الثابت.
+              extraLayers: [
+                if (_myFix != null)
+                  AnimatedDriverMarkerLayer(
+                    fix: _myFix,
+                    duration: const Duration(milliseconds: 2500),
+                    curve: Curves.linear,
                   ),
-                ),
+              ],
+              refitOnMove: true,
+              markers: [
+                if (_myFix == null)
+                  Marker(
+                    point: _currentLocation,
+                    width: 48,
+                    height: 48,
+                    child: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: C.emerald600,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: C.white, width: 3),
+                        boxShadow: Sh.xl(),
+                      ),
+                      child: const Icon(LucideIcons.navigation,
+                          size: 20, color: C.white),
+                    ),
+                  ),
                 if (isAssigned && pickupPt != null) pickupPointMarker(pickupPt),
                 // مكان العميل: وجهة المشوار بعد الاستلام، ومرجع بس قبله لو مكان
                 // الاستلام مجهول (بدون مسار).
                 if (dropPt != null && (!isAssigned || pickupPt == null))
                   customerHomeMarker(dropPt),
               ],
-              routeGeometry: _routeGeometry,
+              // الجزء المتبقي من الطريق بس (اللي اتعدّى بيختفي).
+              routeGeometry: _routeGeometry.length < 2
+                  ? _routeGeometry
+                  : geo.remainingRoute(_currentLocation, _routeGeometry),
               showControls: true,
               followCenter: true,
               fitPoints: (dest ?? dropPt) == null

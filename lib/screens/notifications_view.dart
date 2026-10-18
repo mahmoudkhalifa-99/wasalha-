@@ -77,6 +77,10 @@ class _NotificationsViewState extends State<NotificationsView> {
         _notifications = docs;
         _loading = false;
       });
+    }, onError: (e) {
+      // بدل تحميل للأبد: نوقف المؤشر ونكتفي بقايمة فاضية
+      debugPrint('notifications stream error: $e');
+      if (mounted) setState(() => _loading = false);
     });
   }
 

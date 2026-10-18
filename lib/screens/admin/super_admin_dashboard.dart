@@ -7,6 +7,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../models/models.dart';
 import '../../services/firebase_service.dart';
 import 'app_status_card.dart';
+import 'pricing_config_card.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_shadows.dart';
 import '../../theme/app_text.dart';
@@ -19,6 +20,8 @@ import 'admin_users_list.dart';
 import '../../features/captain_accounts/ui/captain_accounts_view.dart';
 import '../../features/verification/ui/admin_verification_view.dart';
 import 'reviews_view.dart';
+import 'admin_tickets_view.dart';
+import 'admin_reports_view.dart';
 
 enum _AdminTab {
   dashboard,
@@ -28,7 +31,9 @@ enum _AdminTab {
   geo,
   reviews,
   verification,
-  captainAccounts
+  captainAccounts,
+  tickets,
+  reports
 }
 
 /// نسخة Flutter من pages/SuperAdminDashboard.tsx
@@ -54,7 +59,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
   @override
   void initState() {
     super.initState();
-    _subUsers = db.collection('users').snapshots().listen((snap) {
+    _subUsers = db.collection('users').limit(1000).snapshots().listen((snap) {
       if (!mounted) return;
       setState(() {
         _users = snap.docs
@@ -203,6 +208,8 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                       _topBar(),
                       const SizedBox(height: 24),
                       AppStatusCard(userId: widget.user.id),
+                      const SizedBox(height: 16),
+                      PricingConfigCard(userId: widget.user.id),
                       const SizedBox(height: 32),
                       _statsGrid(s),
                       const SizedBox(height: 32),
@@ -265,6 +272,26 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 900),
               child: CaptainAccountsView(user: widget.user),
+            ),
+          ),
+        );
+      case _AdminTab.tickets:
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 900),
+              child: AdminTicketsView(user: widget.user),
+            ),
+          ),
+        );
+      case _AdminTab.reports:
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 900),
+              child: AdminReportsView(user: widget.user),
             ),
           ),
         );
@@ -499,6 +526,10 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
           LucideIcons.bike, C.indigo50, C.indigo500),
       (_AdminTab.reviews, 'آراء وتقييمات العملاء', 'تقييمات الكباتن وتعليقات العملاء',
           LucideIcons.star, C.amber50, C.amber500),
+      (_AdminTab.tickets, 'الدعم والنزاعات', 'شكاوى واسترجاع وبلاغات المستخدمين',
+          LucideIcons.messageCircle, C.rose50, C.rose500),
+      (_AdminTab.reports, 'التقارير', 'أوردرات وإيراد وعمولة وأعلى الكباتن',
+          LucideIcons.activity, C.indigo50, C.indigo500),
     ];
     return LayoutBuilder(builder: (context, box) {
       final cols = box.maxWidth >= 700 ? 2 : 1;

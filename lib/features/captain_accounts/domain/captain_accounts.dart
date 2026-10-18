@@ -1,16 +1,16 @@
 import 'package:intl/intl.dart' as intl;
 
-import '../../../config_constants.dart' show platformFeePerTrip;
+import '../../../config_constants.dart' show platformCommissionPercent;
 import '../../../models/models.dart' show OrderStatus;
 
-/// حسابات الكباتن: عدد المشاوير والمستحق للمنصة (رسوم ثابتة على كل مشوار). كل المنطق هنا نقي (من غير
-/// Firestore) عشان يتختبر.
+/// حسابات الكباتن: عدد المشاوير والمستحق للمنصة (عمولة نسبة من إجمالي كل أوردر). كل المنطق هنا نقي
+/// (من غير Firestore) عشان يتختبر.
 ///
 /// أساس العد: الطلب اللي حالته DELIVERED ومعيّن عليه كابتن، ووقته (`updatedAt`
 /// وقت التسليم) جوه الفترة. السعر = سعر العرض اللي العميل وافق عليه (`price`).
 
-/// رسوم المشوار الافتراضية (من الثابت العام للمنصة) بالجنيه: 5 جنيه.
-double get kDefaultFeePerTrip => platformFeePerTrip;
+/// نسبة العمولة الافتراضية (من الثابت العام للمنصة): 16% من إجمالي الأوردر.
+double get kDefaultCommissionPercent => platformCommissionPercent;
 
 enum PeriodPreset { thisMonth, lastMonth, last30Days, custom }
 
@@ -78,6 +78,9 @@ class TripRow {
   final String? driverId;
   final OrderStatus status;
   final double price;
+
+  /// الأساس اللي بتتحسب عليه العمولة (الافتراضي = إجمالي الأوردر [price]).
+  final double? base;
   final int atMs; // updatedAt
   final String from;
   final String to;
@@ -87,10 +90,13 @@ class TripRow {
     required this.driverId,
     required this.status,
     required this.price,
+    this.base,
     required this.atMs,
     this.from = '',
     this.to = '',
   });
+
+  double get commissionBase => base ?? price;
 }
 
 /// حساب كابتن واحد في فترة.
@@ -112,6 +118,10 @@ class CaptainStats {
   int get deliveredCount => delivered.length;
 
   double get totalFares => delivered.fold(0.0, (a, t) => a + t.price);
+
+  /// مجموع الأساس اللي بتتحسب عليه العمولة (إجمالي الأوردرات المكتملة).
+  double get totalCommissionBase =>
+      delivered.fold(0.0, (a, t) => a + t.commissionBase);
 
   double get averageFare => deliveredCount == 0 ? 0 : totalFares / deliveredCount;
 }
@@ -149,17 +159,17 @@ List<CaptainStats> buildCaptainStats(Iterable<TripRow> rows, DateRange range) {
   return out;
 }
 
-/// المستحق للمنصة = عدد المشاوير المكتملة × رسوم المشوار، مقرّب لأقرب قرش.
-double feeDue(int trips, double feePerTrip) {
-  if (trips <= 0 || feePerTrip <= 0) return 0;
-  return (trips * feePerTrip * 100).round() / 100;
+/// المستحق للمنصة = إجمالي الأوردرات المكتملة × نسبة العمولة (%)، مقرّب لأقرب قرش.
+double feeDue(double totalBase, double percent) {
+  if (totalBase <= 0 || percent <= 0) return 0;
+  return (totalBase * percent).round() / 100;
 }
 
-/// أقصى رسوم مشوار مقبولة في الإدخال (حماية من خطأ كتابة).
-const double kMaxFeePerTrip = 1000;
+/// أقصى نسبة عمولة مقبولة في الإدخال (حماية من خطأ كتابة).
+const double kMaxCommissionPercent = 100;
 
-/// بيحوّل نص المبلغ (بيقبل الأرقام العربية و"," و"ج.م") لرقم من 0 لـ [kMaxFeePerTrip]، أو null.
-double? parseFee(String raw) {
+/// بيحوّل نص النسبة (بيقبل الأرقام العربية و"," و"%") لرقم من 0 لـ [kMaxCommissionPercent]، أو null.
+double? parsePercent(String raw) {
   // أي علامة سالب = إدخال غلط (مش بنحوّله لموجب بالغلط).
   if (raw.contains('-') || raw.contains('−') || raw.contains('–')) return null;
   const ar = '٠١٢٣٤٥٦٧٨٩';
@@ -176,7 +186,7 @@ double? parseFee(String raw) {
     }
   }
   final v = double.tryParse(b.toString());
-  if (v == null || v.isNaN || v < 0 || v > kMaxFeePerTrip) return null;
+  if (v == null || v.isNaN || v < 0 || v > kMaxCommissionPercent) return null;
   return v;
 }
 

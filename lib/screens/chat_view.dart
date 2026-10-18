@@ -48,6 +48,7 @@ class _ChatViewState extends State<ChatView> {
     _sub = db
         .collection('messages')
         .where('orderId', isEqualTo: widget.order.id)
+        .orderBy('createdAt', descending: true) // آخر 100 رسالة (مش أول 100)
         .limit(100)
         .snapshots()
         .listen((snap) {
@@ -88,7 +89,7 @@ class _ChatViewState extends State<ChatView> {
   Future<void> _handleSendMessage() async {
     final text = _newMessageCtrl.text.trim();
     if (text.isEmpty) return;
-    _newMessageCtrl.clear();
+    // بنمسح الخانة بعد ما الإرسال ينجح بس، فلو فشل الرسالة متضيعش.
     try {
       await db.collection('messages').add({
         'orderId': widget.order.id,
@@ -96,6 +97,7 @@ class _ChatViewState extends State<ChatView> {
         'text': text,
         'createdAt': DateTime.now().millisecondsSinceEpoch,
       });
+      _newMessageCtrl.clear(); // بعد نجاح الإرسال بس
       final recipientId = widget.user.id == widget.order.customerId
           ? widget.order.driverId
           : widget.order.customerId;
@@ -111,6 +113,7 @@ class _ChatViewState extends State<ChatView> {
       }
     } catch (err) {
       debugPrint('send message error: $err');
+      if (mounted) showAppAlert(context, 'تعذر إرسال الرسالة، حاول تاني');
     }
   }
 

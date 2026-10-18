@@ -10,8 +10,12 @@ import '../widgets/common.dart';
 class AppDisabledScreen extends StatelessWidget {
   final String message;
   final Future<void> Function() onLogout;
+  final String title;
   const AppDisabledScreen(
-      {super.key, required this.message, required this.onLogout});
+      {super.key,
+      required this.message,
+      required this.onLogout,
+      this.title = 'التطبيق متوقف مؤقتاً'});
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +50,7 @@ class AppDisabledScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    Text('التطبيق متوقف مؤقتاً',
+                    Text(title,
                         textAlign: TextAlign.center,
                         style: T.s(24, T.w900, C.slate900, letterSpacing: -0.5)),
                     const SizedBox(height: 10),

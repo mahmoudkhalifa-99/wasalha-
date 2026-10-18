@@ -34,7 +34,7 @@ class _AdminUsersListState extends State<AdminUsersList> {
   @override
   void initState() {
     super.initState();
-    _sub = db.collection('users').snapshots().listen((snap) {
+    _sub = db.collection('users').limit(1000).snapshots().listen((snap) {
       if (!mounted) return;
       setState(() {
         _users = snap.docs

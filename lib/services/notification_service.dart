@@ -169,6 +169,7 @@ class NotificationService {
         'title': title,
         'body': body,
         'type': type,
+        'senderId': auth.currentUser?.uid, // القواعد والـ relay بيتأكدوا إنه نفس الكاتب
         if (key != null) 'key': key,
         if (orderId != null) 'orderId': orderId,
         'createdAt': DateTime.now().millisecondsSinceEpoch,

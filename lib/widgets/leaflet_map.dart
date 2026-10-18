@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart' as ll;
 
+import '../core/map/geo_utils.dart' show distanceMeters;
 import '../core/map/map_config.dart';
 import '../theme/app_colors.dart';
 
@@ -18,6 +19,13 @@ class WasalhaMap extends StatefulWidget {
   /// true: الكاميرا بتتبع [center] (موقع الكابتن) لما مفيش fitPoints،
   /// طالما المستخدم مش بيحرّك الخريطة بإيده.
   final bool followCenter;
+
+  /// true: لما أول نقطة في [fitPoints] (موقع الكابتن) تتحرك، الكاميرا بتعيد
+  /// الاحتواء (الكابتن + الوجهة) أوتوماتيك، طالما المستخدم مش ماسك الخريطة.
+  final bool refitOnMove;
+
+  /// طبقات إضافية فوق الماركرز (مثلاً ماركر الكابتن المتحرك بأنيميشن).
+  final List<Widget> extraLayers;
   const WasalhaMap({
     super.key,
     required this.center,
@@ -27,6 +35,8 @@ class WasalhaMap extends StatefulWidget {
     this.fitPoints,
     this.showControls = false, // أزرار التكبير: اختيارية ومقفولة افتراضياً
     this.followCenter = false,
+    this.refitOnMove = false,
+    this.extraLayers = const [],
   });
 
   @override
@@ -36,10 +46,16 @@ class WasalhaMap extends StatefulWidget {
 class _WasalhaMapState extends State<WasalhaMap> {
   final MapController _controller = MapController();
   bool _ready = false;
-  bool _userMoved = false;
+  DateTime? _userMovedAt;
   String? _fitKey;
   int _tileErrors = 0;
   bool _useFallbackTiles = false;
+
+  /// المستخدم ماسك الخريطة (حرّكها بإيده من أقل من 20 ثانية): ما نحرّكش الكاميرا.
+  /// بعد 20 ثانية من غير لمس بنرجع نتابع الكابتن تلقائي.
+  bool get _userHolding =>
+      _userMovedAt != null &&
+      DateTime.now().difference(_userMovedAt!) < const Duration(seconds: 20);
 
   // مفتاح الوجهة: بنعيد ضبط الكاميرا بس لما الوجهة تتغير، مش مع كل تحديث
   // لموقع الكابتن — عشان المستخدم يقدر يحرّك الخريطة بحرية.
@@ -57,9 +73,20 @@ class _WasalhaMapState extends State<WasalhaMap> {
     super.didUpdateWidget(old);
     final k = _keyFor(widget.fitPoints);
     if (_ready && k != null && k != _fitKey) _fit();
+    final pts = widget.fitPoints;
+    if (_ready &&
+        widget.refitOnMove &&
+        !_userHolding &&
+        pts != null &&
+        pts.length >= 2) {
+      final o = old.fitPoints;
+      if (o == null || o.isEmpty || distanceMeters(o.first, pts.first) >= 15) {
+        _fit();
+      }
+    }
     if (_ready &&
         widget.followCenter &&
-        !_userMoved &&
+        !_userHolding &&
         (widget.fitPoints == null || widget.fitPoints!.length < 2) &&
         (old.center.latitude != widget.center.latitude ||
             old.center.longitude != widget.center.longitude)) {
@@ -87,7 +114,7 @@ class _WasalhaMapState extends State<WasalhaMap> {
   }
 
   void _recenter() {
-    _userMoved = false;
+    _userMovedAt = null;
     final pts = widget.fitPoints;
     if (pts != null && pts.length >= 2) {
       _fit();
@@ -135,7 +162,7 @@ class _WasalhaMapState extends State<WasalhaMap> {
               _fit();
             },
             onPositionChanged: (cam, hasGesture) {
-              if (hasGesture) _userMoved = true;
+              if (hasGesture) _userMovedAt = DateTime.now();
             },
             interactionOptions: const InteractionOptions(
               flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
@@ -176,6 +203,7 @@ class _WasalhaMapState extends State<WasalhaMap> {
                 ),
               ]),
             MarkerLayer(markers: widget.markers, rotate: false),
+            ...widget.extraLayers,
             const RichAttributionWidget(
               alignment: AttributionAlignment.bottomRight,
               showFlutterMapAttribution: false,

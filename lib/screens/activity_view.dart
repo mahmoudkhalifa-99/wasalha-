@@ -8,6 +8,9 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../config_constants.dart';
 import '../models/models.dart';
 import '../pricing.dart';
+import '../services/notification_service.dart';
+import '../services/order_service.dart' as order_service;
+import 'tickets_view.dart';
 import '../services/firebase_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_shadows.dart';
@@ -86,7 +89,7 @@ class _ActivityViewState extends State<ActivityView> {
   String _statusLabel(OrderStatus s) {
     if (s == OrderStatus.delivered) return 'تم التوصيل بنجاح';
     if (s == OrderStatus.cancelled) return 'تم الإلغاء';
-    return s.value;
+    return s.labelAr;
   }
 
   List<Order> get _filteredOrders {
@@ -322,7 +325,7 @@ class _ActivityViewState extends State<ActivityView> {
           if (widget.user.role == UserRole.driver &&
               order.status == OrderStatus.delivered) ...[
             const SizedBox(height: 12),
-            FareBreakdownView(fare: tripFareOf(order)),
+            FareBreakdownView(total: finalFare(order.price), goods: goodsTotalOf(order)),
           ],
           const SizedBox(height: 12),
           Container(
@@ -349,9 +352,53 @@ class _ActivityViewState extends State<ActivityView> {
               ],
             ),
           ),
+          if (order.status == OrderStatus.delivered ||
+              order.status == OrderStatus.cancelled) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => TicketsView(
+                          user: widget.user,
+                          orderId: order.id,
+                          initialType: 'DISPUTE'))),
+                  child: Text('إبلاغ عن مشكلة',
+                      style: T.s(11, T.w900, C.rose500)),
+                ),
+                if (widget.user.role == UserRole.customer)
+                  TextButton(
+                    onPressed: () => _reorder(order),
+                    child: Text('إعادة الطلب',
+                        style: T.s(11, T.w900, C.emerald700)),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  Future<void> _reorder(Order order) async {
+    try {
+      final id = await order_service.reorderFrom(order,
+          customerId: widget.user.id, customerPhone: widget.user.phone);
+      await NotificationService.notifyUser(
+        userId: UserRole.driver.value,
+        title: 'طلب جديد 🛵',
+        body:
+            '${order.pickup.villageName ?? "مشوار"} ← ${order.dropoff.villageName ?? ""} • ${order.price.toInt()} ج.م',
+        type: 'ALERT',
+        key: 'order_$id',
+        orderId: id,
+      );
+      if (mounted) {
+        showAppAlert(context, 'تم إرسال الطلب من جديد — ارجع للرئيسية لمتابعة العروض');
+      }
+    } catch (e) {
+      if (mounted) showAppAlert(context, 'تعذر إعادة الطلب: ${friendlyError(e)}');
+    }
   }
 
   Widget _routeRow(Color dot, String label, String value) {

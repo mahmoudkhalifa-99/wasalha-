@@ -3,7 +3,10 @@ import 'package:cloud_firestore/cloud_firestore.dart' hide Order, Blob;
 import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../models/models.dart';
+import '../pricing.dart' show goodsTotalOf, tripFareOf;
 import 'firebase_service.dart';
+
+String _actor(String fallback) => auth.currentUser?.uid ?? fallback;
 
 /// Strict validation for order status transitions
 const Map<OrderStatus, List<OrderStatus>> _validTransitions = {
@@ -33,8 +36,19 @@ Future<String> createOrder(Map<String, dynamic> orderData) async {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     const initialStatus = OrderStatus.pending;
 
+    // الإجمالي = أجرة التوصيل + تمن البضاعة. بنخزّن الاتنين منفصلين عشان قبول عرض
+    // (أجرة توصيل بس) ميمسحش تمن الأكل/الأدوية، وعشان القواعد تتحقق من الحساب.
+    final price = (orderData['price'] as num).toDouble();
+    var goods = ((orderData['goodsTotal'] as num?) ?? 0).toDouble();
+    if (goods < 0) goods = 0;
+    if (goods > price) goods = 0;
+    final fare = price - goods;
+
     final newOrder = <String, dynamic>{
       ...orderData,
+      'goodsTotal': goods,
+      'deliveryFare': fare,
+      'baseFare': fare,
       'status': initialStatus.value,
       'createdAt': timestamp,
       'updatedAt': timestamp,
@@ -74,13 +88,14 @@ Future<void> assignOrder(
     final statusHistoryItem = StatusHistoryItem(
       status: OrderStatus.assigned,
       changedAt: timestamp,
-      changedBy: adminId,
+      changedBy: _actor(adminId),
     );
 
     await orderRef.update({
       'status': OrderStatus.assigned.value,
       'assignedTo': courierId,
       'driverId': courierId, // Mapping for backward compatibility if needed
+      'acceptedAt': timestamp,
       'updatedAt': timestamp,
       'statusHistory': FieldValue.arrayUnion([statusHistoryItem.toMap()]),
     });
@@ -105,8 +120,9 @@ Future<void> updateOrderStatus(
   String orderId,
   OrderStatus newStatus,
   String userId,
-  UserRole userRole,
-) async {
+  UserRole userRole, {
+  String? cancelReason,
+}) async {
   try {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final orderRef = db.collection('orders').doc(orderId);
@@ -137,16 +153,26 @@ Future<void> updateOrderStatus(
           'Invalid transition from ${order.status.value} to ${newStatus.value}');
     }
 
+    final actor = _actor(userId);
     final statusHistoryItem = StatusHistoryItem(
       status: newStatus,
       changedAt: timestamp,
-      changedBy: userId,
+      changedBy: actor,
     );
 
     final updates = <String, dynamic>{
       'status': newStatus.value,
       'updatedAt': timestamp,
       'statusHistory': FieldValue.arrayUnion([statusHistoryItem.toMap()]),
+      if (newStatus == OrderStatus.picked) 'pickedAt': timestamp,
+      if (newStatus == OrderStatus.delivered) 'deliveredAt': timestamp,
+      if (newStatus == OrderStatus.cancelled) ...{
+        'cancelledAt': timestamp,
+        'cancelledBy': actor,
+        'cancelReason': (cancelReason ?? '').trim().isEmpty
+            ? 'بدون سبب'
+            : cancelReason!.trim(),
+      },
     };
 
     // If delivered or cancelled, decrement courier workload
@@ -187,9 +213,19 @@ Future<void> releaseOrderFromCourier(String orderId, String courierId) async {
       throw Exception('لا يمكن الاعتذار عن مشوار في هذه الحالة');
     }
 
+    // الطلب يرجع بسعره الأصلي (أجرة التوصيل قبل العرض) + تمن البضاعة.
+    final baseFare = order.baseFare ?? order.deliveryFare ?? tripFareOf(order);
+    final goods = goodsTotalOf(order);
+
     await orderRef.update({
       'status': OrderStatus.pending.value,
       'updatedAt': timestamp,
+      'deliveryFare': baseFare,
+      'price': baseFare + goods,
+      // طلب قديم من قبل الحقول دي: نكتبهم مرة عشان يبقى متسق بعد كده
+      if (order.baseFare == null) ...{'baseFare': baseFare, 'goodsTotal': goods},
+      'acceptedOfferId': FieldValue.delete(),
+      if (order.customerReceived) 'customerReceived': false,
       'statusHistory': FieldValue.arrayUnion([
         StatusHistoryItem(
           status: OrderStatus.pending,
@@ -204,6 +240,20 @@ Future<void> releaseOrderFromCourier(String orderId, String courierId) async {
       'acceptedAt': FieldValue.delete(),
       'assignedTo': FieldValue.delete(),
     });
+
+    // عروض الكابتن القديمة على الطلب ده تتمسح (عشان ما يظهرش بسعر قديم).
+    try {
+      final stale = await db
+          .collection('offers')
+          .where('orderId', isEqualTo: orderId)
+          .where('driverId', isEqualTo: courierId)
+          .get();
+      for (final d in stale.docs) {
+        await d.reference.delete();
+      }
+    } catch (e) {
+      debugPrint('stale offers cleanup failed: $e');
+    }
 
     try {
       final courierDocs = await db
@@ -241,5 +291,91 @@ Future<String?> autoAssignOrder(String orderId) async {
     return bestCourier.userId;
   } catch (error) {
     handleFirestoreError(error, OperationType.get, 'couriers');
+  }
+}
+
+/// إعادة طلب: بيعمل أوردر جديد بنفس العناوين والأصناف والمركبة، بالأجرة الأصلية
+/// (baseFare) + تمن البضاعة. الكباتن بيقدّموا عروضهم من جديد زي أي طلب.
+Future<String> reorderFrom(Order o, {required String customerId, required String customerPhone}) {
+  final fare = o.baseFare ?? o.deliveryFare ?? tripFareOf(o);
+  final goods = goodsTotalOf(o);
+  return createOrder({
+    'customerId': customerId,
+    'customerPhone': customerPhone,
+    'category': o.category.value,
+    'paymentMethod': PaymentMethod.cash.value,
+    'pickup': o.pickup.toMap(),
+    'dropoff': o.dropoff.toMap(),
+    'requestedVehicleType': o.requestedVehicleType.value,
+    'price': fare + goods,
+    'distance': o.distance,
+    if ((o.pickupNotes ?? '').isNotEmpty) 'pickupNotes': o.pickupNotes,
+    if ((o.dropoffNotes ?? '').isNotEmpty) 'dropoffNotes': o.dropoffNotes,
+    if (o.restaurantId != null) 'restaurantId': o.restaurantId,
+    if (o.restaurantName != null) 'restaurantName': o.restaurantName,
+    if (o.foodItems != null) 'foodItems': o.foodItems!.map((e) => e.toMap()).toList(),
+    if (o.goodsCost != null && o.goodsCost! > 0) 'goodsCost': o.goodsCost,
+    'goodsTotal': goods,
+  });
+}
+
+/// قبول عرض كابتن في عملية واحدة (transaction): الطلب لازم لسه PENDING من غير كابتن،
+/// والعرض لازم يكون على نفس الطلب. السعر الجديد = أجرة العرض + تمن البضاعة (مبيمسحش
+/// تمن الأكل/الأدوية). لو أي شرط فشل أو الاتصال قطع: مفيش أي تغيير يتكتب.
+Future<void> acceptOffer({
+  required String orderId,
+  required String offerId,
+  required String customerId,
+}) async {
+  try {
+    final orderRef = db.collection('orders').doc(orderId);
+    final offerRef = db.collection('offers').doc(offerId);
+    await db.runTransaction((tx) async {
+      final orderSnap = await tx.get(orderRef);
+      final offerSnap = await tx.get(offerRef);
+      if (!orderSnap.exists) throw Exception('الطلب غير موجود');
+      if (!offerSnap.exists) throw Exception('العرض لم يعد متاحاً');
+
+      final order = Order.fromMap(orderSnap.data()!, orderSnap.id);
+      final offer =
+          Offer.fromMap(stripFirestore(offerSnap.data()!) as Map<String, dynamic>, offerSnap.id);
+
+      if (order.customerId != customerId) throw Exception('Unauthorized');
+      if (order.status != OrderStatus.pending || order.driverId != null) {
+        throw Exception('الطلب لم يعد متاحاً للقبول');
+      }
+      if (offer.orderId != orderId) throw Exception('العرض لا يخص هذا الطلب');
+
+      final fare = offer.price;
+      final goods = goodsTotalOf(order);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final legacy = order.goodsTotal == null;
+
+      tx.update(orderRef, {
+        'status': OrderStatus.assigned.value,
+        'driverId': offer.driverId,
+        'driverName': offer.driverName,
+        'driverPhone': offer.driverPhone,
+        if (offer.driverPhoto != null) 'driverPhoto': offer.driverPhoto,
+        'acceptedAt': now,
+        'acceptedOfferId': offerId,
+        'deliveryFare': fare,
+        'price': fare + goods,
+        'updatedAt': now,
+        if (legacy) ...{
+          'goodsTotal': goods,
+          'baseFare': order.price - goods,
+        },
+        'statusHistory': FieldValue.arrayUnion([
+          StatusHistoryItem(
+                  status: OrderStatus.assigned,
+                  changedAt: now,
+                  changedBy: customerId)
+              .toMap()
+        ]),
+      });
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.update, 'orders/$orderId');
   }
 }

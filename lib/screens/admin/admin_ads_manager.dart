@@ -11,6 +11,7 @@ import '../../services/firebase_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_shadows.dart';
 import '../../theme/app_text.dart';
+import '../../services/storage_service.dart';
 import '../../utils.dart' as utils;
 import '../../widgets/common.dart';
 
@@ -125,7 +126,9 @@ class _AdminAdsManagerState extends State<AdminAdsManager> {
       final mime =
           file.name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
       final compressed = await utils.compressImage('data:$mime;base64,$b64');
-      if (mounted) setState(() => _imageUrl = compressed);
+      // الصورة بتترفع على Storage ومبتتخزنش base64 جوه المستند
+      final url = await StorageService.uploadImage(folder: 'ads', dataUrl: compressed);
+      if (mounted) setState(() => _imageUrl = url);
     } catch (e) {
       debugPrint('pick image failed: $e');
       if (mounted) await showAppAlert(context, 'تعذر اختيار الصورة، حاول مرة أخرى');
@@ -345,8 +348,7 @@ class _AdminAdsManagerState extends State<AdminAdsManager> {
                       color: C.amber200, width: 4, style: BorderStyle.solid),
                 ),
                 child: _imageUrl.isNotEmpty
-                    ? Image.memory(base64Decode(_imageUrl.split(',').last),
-                        fit: BoxFit.cover)
+                    ? SmartImage(_imageUrl, fit: BoxFit.cover)
                     : Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [

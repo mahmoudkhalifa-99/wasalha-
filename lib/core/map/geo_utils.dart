@@ -95,6 +95,27 @@ double remainingRouteFraction(LatLng p, List<LatLng> line) {
   return (remaining / total).clamp(0.0, 1.0);
 }
 
+/// الجزء المتبقي من المسار من موقع [p] لآخره (بيبدأ من إسقاط [p] على الخط)،
+/// عشان الجزء اللي الكابتن عدّاه ما يفضلش مرسوم ورا الماركر. لو [p] بعيد عن
+/// الخط (خرج عن الطريق) بنرجّع الخط كامل.
+List<LatLng> remainingRoute(LatLng p, List<LatLng> line) {
+  if (line.length < 2) return line;
+  final n = _nearestSegment(p, line);
+  if (n.distance > 150) return line;
+  return [p, ...line.sublist(n.segment + 1)];
+}
+
+/// طول الجزء المتبقي من المسار بالمتر من موقع [p] (0 لو مفيش مسار).
+double remainingRouteMeters(LatLng p, List<LatLng> line) {
+  if (line.length < 2) return 0;
+  final pts = remainingRoute(p, line);
+  var total = identical(pts, line) ? distanceMeters(p, line.first) : 0.0;
+  for (var i = 0; i < pts.length - 1; i++) {
+    total += distanceMeters(pts[i], pts[i + 1]);
+  }
+  return total;
+}
+
 /// تنسيق المسافة بالعربي: "350 م" أو "2.4 كم".
 String formatDistance(double meters) {
   if (meters < 1000) return '${meters.round()} م';
