@@ -112,25 +112,6 @@ if os.path.exists(gs_src):
                 t = t.replace('plugins {', 'plugins {\n' + line, 1)
             open(bp, 'w', encoding='utf-8').write(t)
             print('added google-services plugin to', name)
-    # Crashlytics: plugin عشان يرفع mapping/symbols مع كل بناء
-    CPLUGIN = 'com.google.firebase.crashlytics'
-    if os.path.exists(sp):
-        t = open(sp, encoding='utf-8').read()
-        if CPLUGIN not in t:
-            t = re.sub(r'(id\("' + re.escape(PLUGIN_ID) + r'"\)\s+version\s+"[^"]+"\s+apply\s+false)',
-                       r'\1\n    id("' + CPLUGIN + '") version "3.0.2" apply false', t, count=1)
-            open(sp, 'w', encoding='utf-8').write(t)
-    for name in ('build.gradle.kts', 'build.gradle'):
-        bp = os.path.join(APP, name)
-        if not os.path.exists(bp):
-            continue
-        t = open(bp, encoding='utf-8').read()
-        if CPLUGIN not in t:
-            line = ('    id("' + CPLUGIN + '")') if name.endswith('.kts') else ("    id '" + CPLUGIN + "'")
-            t = t.replace('id("' + PLUGIN_ID + '")', 'id("' + PLUGIN_ID + '")\n' + line, 1) if name.endswith('.kts') \
-                else t.replace("id '" + PLUGIN_ID + "'", "id '" + PLUGIN_ID + "'\n" + line, 1)
-            open(bp, 'w', encoding='utf-8').write(t)
-            print('added crashlytics plugin to', name)
 else:
     print('WARNING: android_overrides/google-services.json مش موجود — تسجيل الدخول بجوجل مش هيشتغل')
 

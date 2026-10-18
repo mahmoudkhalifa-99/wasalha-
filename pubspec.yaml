@@ -18,8 +18,6 @@ dependencies:
   cloud_firestore: ^5.4.4
   firebase_storage: ^12.3.2
   firebase_messaging: ^15.1.3
-  firebase_crashlytics: ^4.1.3   # رصد الأعطال
-  firebase_analytics: ^11.3.3    # تحليلات الاستخدام
   firebase_app_check: ^0.3.1+3   # حماية الـ backend من تطبيقات/سكريبتات مش تطبيقنا
   package_info_plus: ^8.0.2      # نسخة التطبيق (الحد الأدنى للنسخة)
   google_sign_in: ^6.2.2
