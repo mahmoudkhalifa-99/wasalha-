@@ -7,7 +7,7 @@
 //
 // العميل بيشوف إجمالي الأوردر بس، والكابتن بيشوف الإجمالي ← العمولة ← الصافي.
 import 'config_constants.dart'
-    show platformCommissionRate, ConfigPricing, configDefaultPricing, activePricing, activeCommissionRate;
+    show ConfigPricing, activePricing, activeCommissionRate;
 import 'models/models.dart' show Order, VehicleType;
 
 /// الحد الأدنى لسعر أي مشوار (جنيه) — لكل أنواع المركبات.
