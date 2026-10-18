@@ -1,9 +1,7 @@
 import 'dart:async';
-import 'dart:ui' show PlatformDispatcher;
 
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart' show kReleaseMode, debugPrint;
 import 'package:flutter/material.dart';
@@ -36,15 +34,7 @@ Future<void> main() async {
           ),
         ),
       );
-  FlutterError.onError = (d) {
-    FlutterError.presentError(d);
-    if (_crashReportingReady) FirebaseCrashlytics.instance.recordFlutterFatalError(d);
-  };
-  // أخطاء async خارج Flutter framework
-  PlatformDispatcher.instance.onError = (e, st) {
-    if (_crashReportingReady) FirebaseCrashlytics.instance.recordError(e, st, fatal: true);
-    return true;
-  };
+  FlutterError.onError = (d) => FlutterError.presentError(d);
 
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -55,15 +45,9 @@ Future<void> main() async {
   // الـ UI بيبدأ فوراً، والتهيئة بتتم جواه (مع timeout وعرض الخطأ)
   runZonedGuarded(
     () => runApp(const _Bootstrap()),
-    (e, st) {
-      debugPrint('Uncaught: $e\n$st');
-      if (_crashReportingReady) FirebaseCrashlytics.instance.recordError(e, st, fatal: true);
-    },
+    (e, st) => debugPrint('Uncaught: $e\n$st'),
   );
 }
-
-/// true بعد ما Firebase يتهيّأ (قبلها مفيش Crashlytics نبعتله).
-bool _crashReportingReady = false;
 
 Future<void> _initServices() async {
   await OnboardingPrefs.load(); // الترحيب مرة واحدة بعد التثبيت
@@ -84,14 +68,6 @@ Future<void> _initServices() async {
     );
   } catch (e) {
     debugPrint('App Check activate failed: $e');
-  }
-  // Crashlytics: بيشتغل في الإصدار النهائي بس (مش بنلوّث التقارير بأخطاء التطوير).
-  try {
-    await FirebaseCrashlytics.instance
-        .setCrashlyticsCollectionEnabled(kReleaseMode);
-    _crashReportingReady = true;
-  } catch (e) {
-    debugPrint('Crashlytics init failed: $e');
   }
   await SessionPrefs.load();
   if (!SessionPrefs.rememberMe) {
