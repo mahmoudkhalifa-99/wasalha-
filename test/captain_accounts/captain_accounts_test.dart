@@ -122,60 +122,76 @@ void main() {
   });
 
   group('feeDue', () {
-    test('عدد المشاوير × رسوم المشوار', () {
-      expect(feeDue(10, 5), 50);
-      expect(feeDue(1, 5), 5);
-      expect(feeDue(240, 5), 1200);
+    test('إجمالي الأوردرات × نسبة العمولة', () {
+      expect(feeDue(1000, 16), 160);
+      expect(feeDue(100, 16), 16);
+      expect(feeDue(250, 16), 40);
     });
 
-    test('رسوم بكسور بتتقرّب لأقرب قرش', () {
-      expect(feeDue(3, 2.5), 7.5);
-      expect(feeDue(3, 3.333), 10.0); // 9.999 → 10.00
+    test('نسبة بكسور بتتقرّب لأقرب قرش', () {
+      expect(feeDue(99, 16), 15.84);
+      expect(feeDue(10.5, 12.5), 1.31); // 1.3125 → 1.31
     });
 
     test('صفر أو سالب = صفر', () {
-      expect(feeDue(0, 5), 0);
-      expect(feeDue(10, 0), 0);
-      expect(feeDue(-2, 5), 0);
-      expect(feeDue(10, -1), 0);
+      expect(feeDue(0, 16), 0);
+      expect(feeDue(100, 0), 0);
+      expect(feeDue(-2, 16), 0);
+      expect(feeDue(100, -1), 0);
     });
 
-    test('الرسوم مش بتعتمد على سعر المشوار', () {
+    test('العمولة بتتحسب من إجمالي كل أوردر مش من عدد المشاوير', () {
       final range = DateRange(DateTime(2026, 10, 1), DateTime(2026, 11, 1));
       final stats = buildCaptainStats([
-        trip('1', 'a', OrderStatus.delivered, 20, ms(2026, 10, 5)),
-        trip('2', 'a', OrderStatus.delivered, 500, ms(2026, 10, 6)),
+        trip('1', 'a', OrderStatus.delivered, 50, ms(2026, 10, 5)),
+        trip('2', 'a', OrderStatus.delivered, 150, ms(2026, 10, 6)),
       ], range);
       expect(stats.single.deliveredCount, 2);
-      expect(feeDue(stats.single.deliveredCount, kDefaultFeePerTrip), 10);
+      expect(stats.single.totalCommissionBase, 200);
+      expect(feeDue(stats.single.totalCommissionBase, kDefaultCommissionPercent), 32);
+    });
+
+    test('أساس العمولة ممكن يختلف عن الإجمالي (base)', () {
+      final range = DateRange(DateTime(2026, 10, 1), DateTime(2026, 11, 1));
+      final stats = buildCaptainStats([
+        TripRow(
+            orderId: '1',
+            driverId: 'a',
+            status: OrderStatus.delivered,
+            price: 200,
+            base: 30,
+            atMs: ms(2026, 10, 5)),
+      ], range);
+      expect(stats.single.totalFares, 200);
+      expect(stats.single.totalCommissionBase, 30);
     });
   });
 
-  group('parseFee', () {
+  group('parsePercent', () {
     test('أرقام عادية وعشرية', () {
-      expect(parseFee('5'), 5);
-      expect(parseFee('2.5'), 2.5);
-      expect(parseFee(' 7 '), 7);
+      expect(parsePercent('16'), 16);
+      expect(parsePercent('12.5'), 12.5);
+      expect(parsePercent(' 7 '), 7);
     });
 
     test('أرقام عربية وفاصلة عربية/إنجليزية', () {
-      expect(parseFee('٥'), 5);
-      expect(parseFee('٢٫٥'), 2.5);
-      expect(parseFee('2,5'), 2.5);
-      expect(parseFee('5 ج.م'), 5);
+      expect(parsePercent('١٦'), 16);
+      expect(parsePercent('١٢٫٥'), 12.5);
+      expect(parsePercent('12,5'), 12.5);
+      expect(parsePercent('16 %'), 16);
     });
 
-    test('بره 0..1000 أو فاضي أو مش رقم = null', () {
-      expect(parseFee(''), isNull);
-      expect(parseFee('abc'), isNull);
-      expect(parseFee('1001'), isNull);
-      expect(parseFee('-5'), isNull); // السالب مرفوض (مش بيتحوّل لموجب)
-      expect(parseFee('1.2.3'), isNull);
+    test('بره 0..100 أو فاضي أو مش رقم = null', () {
+      expect(parsePercent(''), isNull);
+      expect(parsePercent('abc'), isNull);
+      expect(parsePercent('101'), isNull);
+      expect(parsePercent('-5'), isNull); // السالب مرفوض (مش بيتحوّل لموجب)
+      expect(parsePercent('1.2.3'), isNull);
     });
 
-    test('الحدود 0 و1000 مقبولة', () {
-      expect(parseFee('0'), 0);
-      expect(parseFee('1000'), 1000);
+    test('الحدود 0 و100 مقبولة', () {
+      expect(parsePercent('0'), 0);
+      expect(parsePercent('100'), 100);
     });
   });
 
@@ -187,8 +203,8 @@ void main() {
       expect(formatMoney(41.63), '41.63');
     });
 
-    test('رسوم المشوار الافتراضية = 5 جنيه', () {
-      expect(kDefaultFeePerTrip, 5);
+    test('نسبة العمولة الافتراضية = 16%', () {
+      expect(kDefaultCommissionPercent, 16);
     });
   });
 }

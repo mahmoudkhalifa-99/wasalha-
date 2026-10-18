@@ -4,7 +4,7 @@ import 'package:wasalha/features/verification/domain/verification_enums.dart';
 import 'package:wasalha/features/verification/domain/verification_rules.dart';
 import 'package:wasalha/features/verification/models/captain_verification.dart';
 import 'package:wasalha/models/models.dart' show UserStatus, VehicleType;
-import 'package:wasalha/config_constants.dart' show platformFeePerTrip;
+import 'package:wasalha/config_constants.dart' show platformCommissionPercent;
 
 final now = DateTime(2026, 10, 4, 12);
 
@@ -363,11 +363,11 @@ void main() {
       expect(DeclarationAcceptance.fromMap(null), isNull);
     });
 
-    test('الإقرار فيه بند رسوم المنصة بنفس قيمة الثابت (5 جنيه على كل مشوار)', () {
-      expect(platformFeePerTrip, 5);
-      expect(kDeclarationText.contains('${platformFeePerTrip.toInt()} جنيهات'), isTrue);
-      expect(kDeclarationText.contains('عن كل مشوار'), isTrue);
-      expect(kTermsVersion, '1.1');
+    test('الإقرار فيه بند عمولة المنصة بنفس قيمة الثابت (16% من إجمالي الأوردر)', () {
+      expect(platformCommissionPercent, 16);
+      expect(kDeclarationText.contains('${platformCommissionPercent.toInt()}%'), isTrue);
+      expect(kDeclarationText.contains('من إجمالي قيمة كل أوردر'), isTrue);
+      expect(kTermsVersion, '1.2');
     });
 
     test('النص يبدأ وينتهي بالجمل المعتمدة حرفيًا', () {

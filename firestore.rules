@@ -122,16 +122,17 @@ service cloud.firestore {
       let before = resource.data.get('status', 'APPROVED');
       let after = request.resource.data.get('status', 'APPROVED');
       return
-        // الحساب المعطّل مينفعش يتفعّل من التطبيق: الرجوع للمطوّر (من الكونسول)
-        (before != 'SUSPENDED' || after == 'SUSPENDED')
+        // التفعيل بعد التعطيل مسموح للأدمن (وبيتسجّل في admin_audit من التطبيق)
         // التعطيل لحسابات غير الأدمن، وماينفعش المدير يعطّل نفسه
-        && (after != 'SUSPENDED'
+        (after != 'SUSPENDED'
             || before == 'SUSPENDED'
             || (resource.data.role != 'ADMIN' && uid != request.auth.uid));
     }
 
+    // القراءة: صاحب الحساب أو الإدارة بس (فيه تليفون ومحفظة وتوكن إشعارات). بيانات الكابتن
+    // اللي العميل محتاجها (الاسم/الصورة/التليفون/التقييم) متنسخة جوه الطلب والعرض نفسهم.
     match /users/{uid} {
-      allow read: if signedIn();
+      allow read: if signedIn() && (request.auth.uid == uid || isStaff());
       allow create: if signedIn() && request.auth.uid == uid && validNewUser(uid);
       allow update: if signedIn() && emailOk() && (
           (request.auth.uid == uid && selfUpdateOk())
@@ -167,16 +168,223 @@ service cloud.firestore {
     }
 
     // ───────────── الطلبات ─────────────
+    // كل تعديل على الطلب لازم يطابق انتقال حالة معروف + قائمة حقول مسموحة لصاحب الدور
+    // (عميل / كابتن / إدارة). السعر مبيتغيّرش غير في قبول عرض موثّق (acceptedOfferId) أو
+    // في اعتذار الكابتن (بيرجع للسعر الأصلي baseFare). الكابتن مينفعش يقفل "تم التسليم"
+    // غير بعد ما العميل يؤكد الاستلام.
     match /orders/{orderId} {
-      allow read: if signedIn();
-      allow create: if canWrite()
-          && (request.resource.data.customerId == request.auth.uid || isStaff())
-          && request.resource.data.status in ['DRAFT', 'PENDING'];
-      allow update: if canWrite() && assignmentOk() && (
-          isStaff()
-          || resource.data.customerId == request.auth.uid
+      function amCustomer() {
+        return resource.data.customerId == request.auth.uid;
+      }
+      function amDriver() {
+        return resource.data.get('driverId', '') == request.auth.uid
+            || resource.data.get('assignedTo', '') == request.auth.uid;
+      }
+      function oldStatus() { return resource.data.status; }
+      function newStatus() { return request.resource.data.status; }
+      function changedKeys() {
+        return request.resource.data.diff(resource.data).affectedKeys();
+      }
+      function fareOk(n) { return n is number && n >= 25 && n <= 900; }
+      function nearly(a, b) { return a - b < 0.01 && b - a < 0.01; }
+
+      // سجل الحالات: عنصر واحد بس بيتضاف، حالته = الحالة الجديدة، ومنفّذه = المستخدم نفسه
+      function historyAdds(st) {
+        let h = request.resource.data.get('statusHistory', []);
+        let ho = resource.data.get('statusHistory', []);
+        return h is list && ho is list && h.size() == ho.size() + 1
+            && h[h.size() - 1].status == st
+            && h[h.size() - 1].changedBy == request.auth.uid;
+      }
+
+      function validNewOrder() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['customerId', 'customerPhone', 'category', 'paymentMethod',
+                                 'pickup', 'dropoff', 'requestedVehicleType', 'price', 'distance',
+                                 'pickupNotes', 'dropoffNotes', 'specialRequest', 'restaurantId',
+                                 'restaurantName', 'foodItems', 'prescriptionImage', 'goodsCost',
+                                 'goodsTotal', 'deliveryFare', 'baseFare', 'status', 'createdAt',
+                                 'updatedAt', 'statusHistory', 'operatorId', 'zoneId', 'notes',
+                                 'passengerCount'])
+            && d.keys().hasAll(['customerId', 'category', 'dropoff', 'requestedVehicleType', 'price',
+                                'goodsTotal', 'deliveryFare', 'baseFare', 'status', 'statusHistory'])
+            && (d.customerId == request.auth.uid || isStaff())
+            && d.status in ['DRAFT', 'PENDING']
+            && d.category in ['TAXI', 'FOOD', 'PHARMACY', 'GROCERY', 'PARCEL']
+            && fareOk(d.deliveryFare)
+            && d.baseFare == d.deliveryFare
+            && d.goodsTotal is number && d.goodsTotal >= 0 && d.goodsTotal <= 20000
+            && d.price is number && nearly(d.price, d.deliveryFare + d.goodsTotal)
+            && d.get('pickupNotes', '') is string && d.get('pickupNotes', '').size() <= 500
+            && d.get('dropoffNotes', '') is string && d.get('dropoffNotes', '').size() <= 500
+            && d.get('specialRequest', '') is string && d.get('specialRequest', '').size() <= 2000
+            && d.statusHistory is list && d.statusHistory.size() == 1
+            && d.statusHistory[0].status == d.status
+            && d.statusHistory[0].changedBy == request.auth.uid;
+      }
+
+      // ── العميل ──
+      // إلغاء: وهو منتظر عروض، أو بعد التعيين قبل الاستلام، أو لو الطلب واقف من 30 دقيقة
+      // بعد الاستلام (كابتن اختفى). السبب إجباري وبيتسجّل.
+      function customerCancelOk() {
+        let d = request.resource.data;
+        return oldStatus() in ['PENDING', 'ASSIGNED', 'PICKED', 'IN_DELIVERY']
+            && newStatus() == 'CANCELLED'
+            && (oldStatus() in ['PENDING', 'ASSIGNED']
+                || request.time.toMillis() - resource.data.get('updatedAt', 0) > 30 * 60 * 1000)
+            && changedKeys().hasOnly(['status', 'updatedAt', 'statusHistory', 'cancelledAt',
+                                      'cancelReason', 'cancelledBy'])
+            && d.cancelReason is string && d.cancelReason.size() >= 2 && d.cancelReason.size() <= 200
+            && d.cancelledBy == request.auth.uid
+            && d.cancelledAt is number
+            && historyAdds('CANCELLED');
+      }
+
+      // قبول عرض: كل ده في كتابة واحدة، والسعر الجديد = أجرة العرض الموثّق + تمن البضاعة
+      function acceptOfferOk() {
+        let d = request.resource.data;
+        let legacy = !('goodsTotal' in resource.data);
+        let offer = get(/databases/$(database)/documents/offers/$(d.acceptedOfferId)).data;
+        let goods = legacy ? d.get('goodsTotal', 0) : resource.data.goodsTotal;
+        return oldStatus() == 'PENDING'
+            && newStatus() == 'ASSIGNED'
+            && !('driverId' in resource.data)
+            && changedKeys().hasOnly(legacy
+                ? ['status', 'driverId', 'driverName', 'driverPhone', 'driverPhoto', 'acceptedAt',
+                   'price', 'deliveryFare', 'baseFare', 'goodsTotal', 'acceptedOfferId', 'updatedAt',
+                   'statusHistory']
+                : ['status', 'driverId', 'driverName', 'driverPhone', 'driverPhoto', 'acceptedAt',
+                   'price', 'deliveryFare', 'acceptedOfferId', 'updatedAt', 'statusHistory'])
+            && d.driverId is string && d.driverId != ''
+            && offer.orderId == orderId
+            && offer.driverId == d.driverId
+            && fareOk(offer.price)
+            && d.deliveryFare == offer.price
+            && goods is number && goods >= 0 && goods <= resource.data.price
+            && nearly(d.price, d.deliveryFare + goods)
+            && (!legacy || nearly(d.get('baseFare', -1) + goods, resource.data.price))
+            && historyAdds('ASSIGNED');
+      }
+
+      function customerConfirmReceiptOk() {
+        let d = request.resource.data;
+        return oldStatus() in ['PICKED', 'IN_DELIVERY']
+            && newStatus() == oldStatus()
+            && resource.data.get('customerReceived', false) == false
+            && d.customerReceived == true
+            && changedKeys().hasOnly(['customerReceived', 'customerReceivedAt', 'updatedAt']);
+      }
+
+      function customerRateOk() {
+        let d = request.resource.data;
+        return oldStatus() == 'DELIVERED'
+            && (
+              (resource.data.get('rating', null) == null
+                && changedKeys().hasOnly(['rating', 'feedback', 'ratedAt'])
+                && d.rating is int && d.rating >= 1 && d.rating <= 5
+                && d.get('feedback', '') is string && d.get('feedback', '').size() <= 500)
+              || (changedKeys().hasOnly(['ratingSkipped']) && d.ratingSkipped == true));
+      }
+
+      // ── المطعم: يقبل/يرفض ويحدّث التحضير على أوردرات مطعمه بس، من غير ما يلمس الحالة أو السعر
+      function restaurantUpdateOk() {
+        let d = request.resource.data;
+        let prev = resource.data.get('restaurantStatus', 'NEW');
+        return myRole() == 'RESTAURANT'
+            && resource.data.get('restaurantId', '') != ''
+            && resource.data.restaurantId == me().get('restaurantId', '-')
+            && oldStatus() in ['PENDING', 'ASSIGNED', 'PICKED', 'IN_DELIVERY']
+            && newStatus() == oldStatus()
+            && changedKeys().hasOnly(['restaurantStatus', 'restaurantNote', 'restaurantUpdatedAt', 'updatedAt'])
+            && d.restaurantStatus in ['ACCEPTED', 'PREPARING', 'READY', 'REJECTED']
+            && ((prev == 'NEW' && d.restaurantStatus in ['ACCEPTED', 'REJECTED'])
+                || (prev == 'ACCEPTED' && d.restaurantStatus == 'PREPARING')
+                || (prev == 'PREPARING' && d.restaurantStatus == 'READY'))
+            && d.get('restaurantNote', '') is string && d.get('restaurantNote', '').size() <= 200;
+      }
+
+      function customerUpdateOk() {
+        return amCustomer()
+            && (customerCancelOk() || acceptOfferOk()
+                || customerConfirmReceiptOk() || customerRateOk());
+      }
+
+      // ── الكابتن المعيّن ──
+      function driverUpdateOk() {
+        let d = request.resource.data;
+        return amDriver() && (
+          // استلام الطلب
+          (oldStatus() == 'ASSIGNED' && newStatus() == 'PICKED'
+            && changedKeys().hasOnly(['status', 'updatedAt', 'statusHistory', 'pickedAt'])
+            && historyAdds('PICKED'))
+          || (oldStatus() == 'PICKED' && newStatus() == 'IN_DELIVERY'
+            && changedKeys().hasOnly(['status', 'updatedAt', 'statusHistory'])
+            && historyAdds('IN_DELIVERY'))
+          // التسليم النهائي: بعد تأكيد العميل بس
+          || (oldStatus() in ['PICKED', 'IN_DELIVERY'] && newStatus() == 'DELIVERED'
+            && resource.data.get('customerReceived', false) == true
+            && changedKeys().hasOnly(['status', 'updatedAt', 'statusHistory', 'deliveredAt'])
+            && d.deliveredAt is number
+            && historyAdds('DELIVERED'))
+          // اعتذار: الطلب يرجع PENDING وبالسعر الأصلي، ومعاه حذف بيانات الكابتن
+          || (oldStatus() in ['ASSIGNED', 'PICKED'] && newStatus() == 'PENDING'
+            && changedKeys().hasOnly(['status', 'updatedAt', 'statusHistory', 'driverId', 'driverName',
+                                      'driverPhone', 'driverPhoto', 'acceptedAt', 'assignedTo',
+                                      'acceptedOfferId', 'deliveryFare', 'price', 'customerReceived',
+                                      'customerReceivedAt', 'goodsTotal', 'baseFare'])
+            && !('driverId' in d) && !('assignedTo' in d) && !('acceptedOfferId' in d)
+            && d.get('customerReceived', false) == false
+            && (
+              // طلب جديد: يرجع لأجرته الأصلية بالظبط
+              ('baseFare' in resource.data
+                && d.deliveryFare == resource.data.baseFare
+                && nearly(d.price, d.deliveryFare + resource.data.get('goodsTotal', 0)))
+              // طلب قديم (قبل baseFare): الأجرة في الحدود والسعر ميزيدش عن الحالي
+              || (!('baseFare' in resource.data)
+                && fareOk(d.deliveryFare) && d.deliveryFare == d.baseFare
+                && d.goodsTotal is number && d.goodsTotal >= 0
+                && nearly(d.price, d.deliveryFare + d.goodsTotal)
+                && d.price <= resource.data.price))
+            && historyAdds('PENDING')));
+      }
+
+      // ── الإدارة (مدير/مشغّل) ──
+      function staffUpdateOk() {
+        let d = request.resource.data;
+        return isStaff() && (
+          // تعيين كابتن يدوي
+          (oldStatus() == 'PENDING' && newStatus() == 'ASSIGNED'
+            && changedKeys().hasOnly(['status', 'assignedTo', 'driverId', 'driverName', 'driverPhone',
+                                      'driverPhoto', 'acceptedAt', 'updatedAt', 'statusHistory'])
+            && d.driverId is string && d.driverId != ''
+            && historyAdds('ASSIGNED'))
+          // إلغاء
+          || (oldStatus() in ['PENDING', 'ASSIGNED', 'PICKED', 'IN_DELIVERY'] && newStatus() == 'CANCELLED'
+            && changedKeys().hasOnly(['status', 'updatedAt', 'statusHistory', 'cancelledAt',
+                                      'cancelReason', 'cancelledBy'])
+            && d.cancelReason is string && d.cancelReason.size() >= 2 && d.cancelReason.size() <= 200
+            && d.cancelledBy == request.auth.uid
+            && historyAdds('CANCELLED'))
+          // ملاحظات إدارية
+          || (newStatus() == oldStatus()
+            && changedKeys().hasOnly(['notes', 'operatorId', 'zoneId', 'updatedAt'])));
+      }
+
+      // القراءة: العميل صاحب الطلب، الكابتن المعيّن، الإدارة، أو كابتن مسموح له يستقبل طلبات
+      // (الطلبات المنتظرة بس، عشان يقدّم عرض). مفيش قراءة مفتوحة لأي مستخدم.
+      allow read: if signedIn() && (
+          resource.data.customerId == request.auth.uid
           || resource.data.get('driverId', '') == request.auth.uid
-          || resource.data.get('assignedTo', '') == request.auth.uid);
+          || resource.data.get('assignedTo', '') == request.auth.uid
+          || isStaff()
+          // حساب المطعم: أوردرات مطعمه بس
+          || (myRole() == 'RESTAURANT' && resource.data.get('restaurantId', '') != ''
+              && resource.data.restaurantId == me().get('restaurantId', '-'))
+          || (resource.data.status == 'PENDING' && myRole() == 'DRIVER'
+              && driverGateOk(request.auth.uid)));
+      allow create: if canWrite() && validNewOrder();
+      allow update: if canWrite() && assignmentOk()
+          && (customerUpdateOk() || driverUpdateOk() || staffUpdateOk() || restaurantUpdateOk());
       allow delete: if isAdmin();
     }
 
@@ -338,10 +546,27 @@ service cloud.firestore {
     match /config/app {
       allow read: if true;
       allow write: if isAdmin()
-          && request.resource.data.keys().hasOnly(['enabled', 'message', 'updatedAt', 'updatedBy'])
+          && request.resource.data.keys().hasOnly(['enabled', 'message', 'minVersion', 'updatedAt', 'updatedBy'])
           && request.resource.data.enabled is bool
+          && request.resource.data.get('minVersion', '') is string
+          && request.resource.data.get('minVersion', '').size() <= 20
           && request.resource.data.message is string
           && request.resource.data.message.size() <= 300;
+    }
+
+    // التسعير والعمولة (الأدمن بيعدّله من التطبيق). نفس حدود الأجرة في قواعد الأوردرات.
+    match /config/pricing {
+      allow read: if signedIn();
+      allow write: if isAdmin()
+          && request.resource.data.keys().hasOnly(['basePrice', 'pricePerKm', 'foodOutsidePricePerKm',
+                                                  'sameVillagePrice', 'maxPrice', 'deliveryBasePrice',
+                                                  'commissionPercent', 'multipliers', 'updatedAt', 'updatedBy'])
+          && request.resource.data.get('maxPrice', 900) is number
+          && request.resource.data.get('maxPrice', 900) >= 25 && request.resource.data.get('maxPrice', 900) <= 900
+          && request.resource.data.get('sameVillagePrice', 25) >= 25
+          && request.resource.data.get('sameVillagePrice', 25) <= 900
+          && request.resource.data.get('commissionPercent', 16) >= 0
+          && request.resource.data.get('commissionPercent', 16) <= 40;
     }
 
     // ───────────── تقييمات الكباتن ─────────────
@@ -375,20 +600,59 @@ service cloud.firestore {
     }
 
     // ───────────── عروض الأسعار ─────────────
+    // العرض = أجرة التوصيل بس (من 25 لـ 900)، من غير تمن الأكل/الأدوية. الكابتن يقدّم
+    // عرض على طلب لسه PENDING، وبحسابه هو.
+    function offerFareOk(n) { return n is number && n >= 25 && n <= 900; }
+
     match /offers/{offerId} {
-      allow read: if signedIn();
+      // القراءة: الكابتن صاحب العرض، عميل الطلب، أو الإدارة
+      allow read: if signedIn() && (
+          resource.data.driverId == request.auth.uid
+          || isStaff()
+          || get(/databases/$(database)/documents/orders/$(resource.data.orderId)).data.customerId == request.auth.uid);
       allow create: if canWrite()
+          && request.resource.data.keys().hasOnly(['orderId', 'driverId', 'driverName', 'driverPhone',
+                                                  'driverRating', 'driverPhoto', 'vehicleType', 'price',
+                                                  'createdAt'])
+          && request.resource.data.keys().hasAll(['orderId', 'driverId', 'price', 'createdAt'])
           && request.resource.data.driverId == request.auth.uid
           && myRole() == 'DRIVER'
+          && offerFareOk(request.resource.data.price)
+          // التقييم المعروض للعميل = تقييم الكابتن المحسوب في حسابه (مش رقم من عنده)
+          && request.resource.data.get('driverRating', 5) == me().get('rating', 5)
+          && request.resource.data.orderId is string
+          && get(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.status == 'PENDING'
           && driverGateOk(request.auth.uid);
-      allow update, delete: if canWrite()
-          && (resource.data.driverId == request.auth.uid || isStaff());
+      // تعديل السعر بس (نفس الحدود) وهو لسه على طلب منتظر
+      allow update: if canWrite()
+          && resource.data.driverId == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['price'])
+          && offerFareOk(request.resource.data.price)
+          && get(/databases/$(database)/documents/orders/$(resource.data.orderId)).data.status == 'PENDING';
+      // الحذف: الكابتن صاحب العرض، أو الإدارة، أو عميل الطلب (تنضيف)
+      allow delete: if canWrite()
+          && (resource.data.driverId == request.auth.uid || isStaff()
+              || get(/databases/$(database)/documents/orders/$(resource.data.orderId)).data.customerId == request.auth.uid);
     }
 
     // ───────────── الشات ─────────────
+    // محادثة الطلب: العميل صاحبه، الكابتن المعيّن عليه، أو الإدارة بس.
+    function orderOf(id) { return get(/databases/$(database)/documents/orders/$(id)).data; }
+    function inOrder(o) {
+      return o.customerId == request.auth.uid
+          || o.get('driverId', '') == request.auth.uid
+          || o.get('assignedTo', '') == request.auth.uid;
+    }
+
     match /messages/{messageId} {
-      allow read: if signedIn();
-      allow create: if canWrite() && request.resource.data.senderId == request.auth.uid;
+      allow read: if signedIn() && (isStaff() || inOrder(orderOf(resource.data.orderId)));
+      allow create: if canWrite()
+          && request.resource.data.keys().hasOnly(['orderId', 'senderId', 'text', 'createdAt'])
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() >= 1 && request.resource.data.text.size() <= 1000
+          && request.resource.data.orderId is string
+          && inOrder(orderOf(request.resource.data.orderId));
       allow update, delete: if isAdmin();
     }
 
@@ -397,15 +661,37 @@ service cloud.firestore {
       return resource.data.userId in [request.auth.uid, 'ALL', myRole()];
     }
 
+    // الإشعارات: الإدارة تبعت لأي حد/دور/الكل. أي مستخدم تاني مينفعش يبعت غير في سياق
+    // طلب هو طرف فيه: للطرف التاني بس، أو "طلب جديد" للكباتن من صاحب طلب منتظر.
     function validNotif() {
       let d = request.resource.data;
       return d.keys().hasOnly(['userId', 'title', 'body', 'type', 'key', 'orderId',
                                'createdAt', 'read', 'senderId', 'senderName'])
           && d.userId is string && d.title is string && d.body is string
           && d.title.size() <= 120 && d.body.size() <= 1000
-          // البث للكل والرسائل الإدارية: للمدير والمشغّل بس
-          && (d.userId != 'ALL' || isStaff())
-          && (d.get('type', 'INFO') != 'ADMIN_MESSAGE' || isStaff());
+          && d.get('senderId', request.auth.uid) == request.auth.uid
+          && (isStaff() || validPeerNotif());
+    }
+
+    function validPeerNotif() {
+      let d = request.resource.data;
+      let o = orderOf(d.orderId);
+      return d.get('orderId', '') is string && d.get('orderId', '') != ''
+          && d.get('type', 'INFO') in ['INFO', 'SUCCESS', 'ALERT']
+          && d.userId != 'ALL'
+          && (
+            // طلب جديد: من صاحب الطلب لكل الكباتن
+            (d.userId == 'DRIVER' && d.get('type', 'INFO') == 'ALERT'
+              && o.customerId == request.auth.uid && o.status == 'PENDING')
+            // العميل → الكابتن المعيّن
+            || (o.customerId == request.auth.uid && d.userId == o.get('driverId', '-'))
+            // المطعم → عميل الطلب (قبول/تحضير/جاهز/اعتذار)
+            || (d.userId == o.customerId && myRole() == 'RESTAURANT'
+                && o.get('restaurantId', '') != ''
+                && o.restaurantId == me().get('restaurantId', '-'))
+            // الكابتن (المعيّن، أو مقدّم عرض/معتذر على طلب منتظر) → العميل
+            || (d.userId == o.customerId && myRole() == 'DRIVER'
+                && (o.get('driverId', '') == request.auth.uid || o.status == 'PENDING')));
     }
 
     match /notifications/{id} {
@@ -428,9 +714,70 @@ service cloud.firestore {
       allow update, delete: if isStaff();
     }
 
+    // سجل المعاملات: الـ Cloud Function بتكتب الأرباح والعمولة عند التسليم (بصلاحية Admin SDK).
+    // من التطبيق: الأدمن بس (تسوية/تعديل رصيد)، وإضافة فقط: مفيش تعديل ولا حذف.
     match /transactions/{id} {
       allow read: if signedIn() && (resource.data.userId == request.auth.uid || isStaff());
-      allow write: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // تسويات عمولة الكباتن (الأدمن بيسجّل إن الكابتن سدّد). إضافة فقط.
+    match /settlements/{id} {
+      allow read: if signedIn() && (resource.data.driverId == request.auth.uid || isStaff());
+      allow create: if isAdmin()
+          && request.resource.data.keys().hasOnly(['driverId', 'amount', 'note', 'createdBy', 'createdAt'])
+          && request.resource.data.amount is number && request.resource.data.amount > 0
+          && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // ───────────── عناوين العميل المحفوظة ─────────────
+    // خاصة بصاحبها بس (قراءة/كتابة/مسح). حد أقصى 10 عناوين بيتطبّق من التطبيق.
+    match /saved_addresses/{id} {
+      allow read, delete: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if canWrite()
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.keys().hasOnly(['userId', 'label', 'placeName', 'displayText', 'area',
+                                                  'lat', 'lng', 'villageId', 'note', 'createdAt'])
+          && request.resource.data.label is string
+          && request.resource.data.label.size() >= 1 && request.resource.data.label.size() <= 40
+          && request.resource.data.get('note', '').size() <= 300
+          && request.resource.data.get('displayText', '').size() <= 300
+          && request.resource.data.get('placeName', '').size() <= 120;
+      allow update: if false;
+    }
+
+    // ───────────── الدعم والنزاعات والاسترجاع ─────────────
+    // أي مستخدم يفتح تذكرة (ولو مرتبطة بطلب يكون طرف فيه). الإدارة بس هي اللي بتقفلها
+    // وبتكتب القرار. الاسترجاع هنا قرار مسجّل (الدفع كاش فمفيش رد فلوس أوتوماتيك).
+    match /tickets/{ticketId} {
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || isStaff());
+      allow create: if canWrite()
+          && request.resource.data.keys().hasOnly(['userId', 'userName', 'userPhone', 'userRole',
+                                                  'orderId', 'type', 'message', 'status', 'createdAt'])
+          && request.resource.data.keys().hasAll(['userId', 'type', 'message', 'status', 'createdAt'])
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.type in ['DISPUTE', 'REFUND', 'SUPPORT', 'SAFETY']
+          && request.resource.data.status == 'OPEN'
+          && request.resource.data.message is string
+          && request.resource.data.message.size() >= 5 && request.resource.data.message.size() <= 1000
+          && (!('orderId' in request.resource.data)
+              || inOrder(orderOf(request.resource.data.orderId)));
+      allow update: if isStaff()
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['status', 'resolution', 'resolvedBy', 'resolvedAt', 'updatedAt'])
+          && request.resource.data.status in ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'REJECTED']
+          && request.resource.data.get('resolution', '') is string
+          && request.resource.data.get('resolution', '').size() <= 1000;
+      allow delete: if false;
+    }
+
+    // سجل مراجعة لأفعال الأدمن الحساسة (تسوية، تعديل رصيد، حذف مستخدم...). إضافة فقط.
+    match /admin_audit/{id} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && request.resource.data.performedBy == request.auth.uid;
+      allow update, delete: if false;
     }
 
     // ───────────── الآراء والشكاوى ─────────────

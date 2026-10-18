@@ -98,8 +98,11 @@ workflows:
               f.write(content)
           PYEOF
             echo "تم إعداد توقيع الـ Release بالـ keystore الثابت"
+          elif [ "${ALLOW_DEBUG_SIGNING:-}" = "true" ]; then
+            echo "تنبيه: مفيش keystore - هيتم التوقيع بمفتاح debug (ALLOW_DEBUG_SIGNING=true). مينفعش للنشر ولا هيشتغل تسجيل الدخول بجوجل"
           else
-            echo "تنبيه: متغيرات الـ keystore (CM_KEYSTORE, CM_KEYSTORE_PASSWORD, CM_KEY_ALIAS, CM_KEY_PASSWORD) مش موجودة - هيتم التوقيع بمفتاح debug مؤقت (مش هيشتغل تسجيل الدخول بجوجل)"
+            echo "خطأ: متغيرات الـ keystore (CM_KEYSTORE, CM_KEYSTORE_PASSWORD, CM_KEY_ALIAS, CM_KEY_PASSWORD) مش موجودة. بنوقف البناء بدل ما نطلّع نسخة موقّعة بمفتاح debug. لو عايز نسخة تجريبية فعلاً ضيف ALLOW_DEBUG_SIGNING=true"
+            exit 1
           fi
 
       - name: تفعيل Core Library Desugaring (مطلوب لـ flutter_local_notifications)

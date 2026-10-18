@@ -31,7 +31,14 @@ function doPost(e) {
       if (!isStaff_(caller)) return out_({ ok: false, error: 'forbidden' });
       tokens = broadcastTokens_(body.roles || []);
     } else {
-      tokens = tokensFor_(String(body.userId || ''));
+      const target = String(body.userId || '');
+      // غير الإدارة: مينفعش يبعت Push لأي حد. لازم يكون فيه إشعار اتكتب في Firestore
+      // (واتقبل من قواعد Firestore، يعني الطرف التاني في طلب هو فيه) بنفس المستلم
+      // والمرسِل. كده الـ relay مش بيفتح باب أوسع من القواعد.
+      if (!isStaff_(caller) && !notificationExists_(caller, target, String(body.key || ''), String(body.title || ''))) {
+        return out_({ ok: false, error: 'forbidden' });
+      }
+      tokens = tokensFor_(target);
     }
     if (!tokens.length) return out_({ ok: true, sent: 0 });
 
@@ -166,6 +173,33 @@ function tokensFor_(userId) {
   if (res.getResponseCode() !== 200) return [];
   const f = JSON.parse(res.getContentText()).fields || {};
   return f.fcmToken && f.fcmToken.stringValue ? [f.fcmToken.stringValue] : [];
+}
+
+// هل فيه إشعار بنفس الـ key والمستلم كتبه المستخدم ده (senderId) في آخر 10 دقايق؟
+function notificationExists_(callerUid, userId, key, title) {
+  if (!key || !userId || userId === 'ALL') return false;
+  const res = UrlFetchApp.fetch(fsBase_() + ':runQuery', {
+    method: 'post', contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + getAccessToken_() }, muteHttpExceptions: true,
+    payload: JSON.stringify({
+      structuredQuery: {
+        from: [{ collectionId: 'notifications' }],
+        where: fieldEq_('key', { stringValue: key }),
+        limit: 50,
+      },
+    }),
+  });
+  if (res.getResponseCode() !== 200) return false;
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  return JSON.parse(res.getContentText()).some(function (r) {
+    const f = r.document && r.document.fields;
+    if (!f) return false;
+    const created = f.createdAt && (f.createdAt.integerValue || f.createdAt.doubleValue);
+    return f.userId && f.userId.stringValue === userId
+      && f.senderId && f.senderId.stringValue === callerUid
+      && f.title && f.title.stringValue === title
+      && Number(created || 0) >= cutoff;
+  });
 }
 
 function fieldEq_(path, value) {

@@ -62,3 +62,11 @@ const verification = require('./verification');
 exports.onVerificationWrite = verification.onVerificationWrite;
 exports.onDriverUserWrite = verification.onDriverUserWrite;
 exports.verificationExpirySweep = verification.verificationExpirySweep;
+
+// الأوردرات: تسوية المحفظة عند التسليم + تقييم الكابتن + انتهاء الأوردرات المعلقة
+const orders = require('./orders');
+exports.settleDeliveredOrder = orders.settleDeliveredOrder;
+exports.updateDriverRating = orders.updateDriverRating;
+exports.expireStalePendingOrders = orders.expireStalePendingOrders;
+exports.guardDoubleAssignment = orders.guardDoubleAssignment;
+exports.cleanupDeletedUser = orders.cleanupDeletedUser;
