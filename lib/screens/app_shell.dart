@@ -364,9 +364,10 @@ class _AppShellState extends State<AppShell> {
   @override
   Widget build(BuildContext context) {
     if (_showOnboarding) {
-      return OnboardingScreen(onComplete: () {
-        OnboardingPrefs.markSeen();
-        setState(() => _showOnboarding = false);
+      return OnboardingScreen(onComplete: () async {
+        // نستنى الحفظ قبل ما نقفل الشاشة، عشان لو التطبيق اتقفل فجأة العلامة تكون اتكتبت
+        await OnboardingPrefs.markSeen();
+        if (mounted) setState(() => _showOnboarding = false);
       });
     }
     if (_loading) return _loadingScreen(context);

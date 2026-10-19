@@ -173,10 +173,16 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
         .snapshots()
         .listen((snap) {
       if (!mounted) return;
+      // ترتيب ثابت (الأقدم الأول): Firestore بيرجّع الطلبات بترتيب مش مضمون، ومع طلبين
+      // ورا بعض كان الطلب "النشط" بيتبدّل بينهم وعروضهم بتتلخبط.
       final all = snap.docs
           .map((d) => Order.fromMap(
               stripFirestore(d.data()) as Map<String, dynamic>, d.id))
-          .toList();
+          .toList()
+        ..sort((a, b) {
+          final c = a.createdAt.compareTo(b.createdAt);
+          return c != 0 ? c : a.id.compareTo(b.id);
+        });
       Order? active;
       for (final o in all) {
         if (o.status != OrderStatus.delivered &&
@@ -239,6 +245,8 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
   void _onActiveOrderChanged() {
     _subOffers?.cancel();
     _subDriver?.cancel();
+    // عروض الطلب السابق مينفعش تفضل ظاهرة على الطلب الجديد
+    _incomingOffers = [];
     // الوجهة اتغيّرت (مرحلة جديدة/كابتن جديد): المسار والتباعد القديمين ملغيين.
     _routeRetryTimer?.cancel();
     _routeBackoff.reset();
@@ -252,11 +260,13 @@ class _CustomerDashboardState extends State<CustomerDashboard> {
           .where('orderId', isEqualTo: order.id)
           .snapshots()
           .listen((snap) {
-        if (!mounted) return;
+        // لقطة متأخرة لطلب مبقاش هو النشط: نتجاهلها
+        if (!mounted || _activeOrder?.id != order.id) return;
         setState(() {
           _incomingOffers = snap.docs
               .map((d) => Offer.fromMap(
                   stripFirestore(d.data()) as Map<String, dynamic>, d.id))
+              .where((o) => o.orderId == order.id)
               .toList();
         });
         // نتابع مواقع الكباتن اللي قدّموا عروض (عشان العميل يختار الأقرب).

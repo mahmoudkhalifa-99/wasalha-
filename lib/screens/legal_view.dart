@@ -37,8 +37,31 @@ class LegalView extends StatelessWidget {
         ),
         body: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
-          child: SelectableText(privacy ? privacyPolicyText : termsText,
-              style: T.s(13, T.w500, C.slate700, height: 1.9)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SelectableText(privacy ? privacyPolicyText : termsText,
+                  style: T.s(13, T.w500, C.slate700, height: 1.9)),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                children: [
+                  OutlinedButton(
+                    onPressed: () => launchUrl(
+                        Uri(scheme: 'mailto', path: legalContactEmail),
+                        mode: LaunchMode.externalApplication),
+                    child: const Text('راسلنا بالبريد'),
+                  ),
+                  OutlinedButton(
+                    onPressed: () => launchUrl(
+                        Uri.parse('https://wa.me/2$legalContactWhatsapp'),
+                        mode: LaunchMode.externalApplication),
+                    child: const Text('واتساب'),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
