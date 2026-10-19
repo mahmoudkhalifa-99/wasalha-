@@ -130,7 +130,7 @@ exports.guardDoubleAssignment = onDocumentUpdated('orders/{orderId}', async (eve
 
 // حذف حساب (من المستخدم نفسه أو من الأدمن): نكمّل التنضيف من السيرفر.
 //  - حساب Auth نفسه (حذف الأدمن لوثيقة المستخدم مكانش بيمسحه)
-//  - الموقع، الإشعارات، رسايل الشات
+//  - الموقع، الإشعارات، رسايل الشات، العناوين المحفوظة، تذاكر الدعم
 //  - الأوردرات بتفضل (سجل مالي) لكن بدون بيانات شخصية: تليفون وروشتة وملاحظات
 //  - مستندات توثيق الكابتن بتفضل لحد سياسة احتفاظ قانونية (متعمّد، شوف القواعد)
 exports.cleanupDeletedUser = onDocumentDeleted('users/{uid}', async (event) => {
@@ -153,6 +153,8 @@ exports.cleanupDeletedUser = onDocumentDeleted('users/{uid}', async (event) => {
   };
   await delAll(db().collection('notifications').where('userId', '==', uid));
   await delAll(db().collection('messages').where('senderId', '==', uid));
+  await delAll(db().collection('saved_addresses').where('userId', '==', uid));
+  await delAll(db().collection('tickets').where('userId', '==', uid));
 
   const FV = admin.firestore.FieldValue;
   const orders = await db().collection('orders').where('customerId', '==', uid).limit(500).get();

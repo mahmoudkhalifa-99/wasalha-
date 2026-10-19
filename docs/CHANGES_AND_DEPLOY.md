@@ -21,7 +21,7 @@ cd ../rules_test && npm install && npm test     # اختبارات القواع�
 
 ## 3) بعد النشر
 - Firebase Console ← App Check: فعّل Enforce لـ Firestore وStorage بعد ما تتأكد إن النسخ بتبعت توكن.
-- ضع روابط سياسة الخصوصية والشروط في `lib/constants.dart` (النص الحالي مسودة).
+- سياسة الخصوصية والشروط: النص النهائي في `lib/legal_texts.dart`، ونسخ HTML جاهزة للاستضافة في `docs/privacy_policy.html` و`docs/terms.html`. استضيفهم على رابط عام (GitHub Pages أو Firebase Hosting) وحط الرابطين في `lib/constants.dart` (`privacyPolicyUrl`/`termsUrl`) ومعاهم Play Console. لما تعدّل أي نص غيّر `legalLastUpdated`.
 - ترحيل الصور القديمة (اختياري): `functions/scripts/migrate_images.js` (تجربة افتراضياً، `--apply` للتنفيذ؛ خد export قبلها).
 - الأوردرات المنتظرة وقت النشر الأحسن تخلص أو تتلغى قبلها.
 
