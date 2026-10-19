@@ -57,6 +57,10 @@ Future<void> _initServices() async {
     // التهيئة اتعملت قبل كده (native) — عادي نكمل
     if (e.code != 'duplicate-app') rethrow;
   }
+  // مستخدم عنده جلسة دخول فعلاً مش محتاج ترحيب (حتى لو علامة الترحيب ضاعت لأي سبب)
+  if (auth.currentUser != null && !OnboardingPrefs.seen) {
+    await OnboardingPrefs.markSeen();
+  }
   // "تذكرني": لو المستخدم لغاه، نطلّعه من الجلسة عند فتح التطبيق.
   // (الافتراضي مفعّل، فالجلسة بتفضل محفوظة ومفيش دخول في كل مرة.)
   // App Check: Play Integrity في الإصدار النهائي، وDebug provider أثناء التطوير. التفعيل
